@@ -14,7 +14,7 @@ const MAX_RANGE = 7.5;       // istemci menzili 3.5-4.2 blok; konum paketi gecik
 const FRESH_MS = 1500;
 const FIST = 2.0;
 const HELD_GRACE_MS = 700;   // esya degistirir degistirmez vurunca eski/yeni esyanin buyugu gecerli (paket gecikmesi)
-const MAX_DMG = 12;
+const MAX_DMG = 20;         // v223: 1.9 kritik baltasi (9 x 1.5) 12'yi gecer
 
 // blocks.gd attack_damage() ile ayni (esya id -> hasar). Esya id'leri enum sirasindan okunmustur.
 const WEAPON_DMG = {
@@ -22,6 +22,16 @@ const WEAPON_DMG = {
   126: 6.0, 125: 5.0, 128: 4.5, 127: 3.5, 132: 7.0, 131: 6.0, 134: 5.5, 133: 4.0,
   136: 5.0, 135: 4.0, 138: 3.5, 137: 3.0, 92: 6.0, 129: 2.5,
 };
+// v223: 1.9 PVP: baltalar kilictan cok vurur (blocks.gd attack_damage ile ayni): tahta 7, tas 9, demir 9, elmas 9
+WEAPON_DMG[33] = 7.0; WEAPON_DMG[136] = 9.0; WEAPON_DMG[126] = 9.0; WEAPON_DMG[132] = 9.0;
+// saldiri hizi (blocks.gd attack_speed ile ayni): bekleme = 1/hiz sn
+const WEAPON_SPEED = {
+  36: 1.6, 92: 1.6, 93: 1.6, 95: 1.0, 150: 1.0, 33: 0.8, 136: 0.8, 126: 0.9, 132: 1.0,
+  32: 1.2, 135: 1.2, 125: 1.2, 131: 1.2, 34: 1.0, 138: 1.0, 128: 1.0, 134: 1.0,
+  35: 1.0, 137: 2.0, 127: 3.0, 133: 4.0,
+};
+const SPEED_FIST = 4.0;
+function speedOf(id) { return WEAPON_SPEED[id] !== undefined ? WEAPON_SPEED[id] : SPEED_FIST; }
 function dmgOf(id) { return WEAPON_DMG[id] !== undefined ? WEAPON_DMG[id] : FIST; }
 
 function fresh(st, now) {
@@ -43,12 +53,14 @@ function onState(c, data, now) {
   };
 }
 
-function heldCap(att, now) {
+function heldInfo(att, now) {
   const h = att.pst && att.pst.held;
-  if (!h || !h.length) return FIST;
-  let m = 0;
-  for (const e of h) if (now - e.t < HELD_GRACE_MS) m = Math.max(m, dmgOf(e.id));
-  return m || FIST;
+  let best = null;
+  if (h) for (const e of h) if (now - e.t < HELD_GRACE_MS) {
+    const d = dmgOf(e.id);
+    if (!best || d > best.dmg) best = { dmg: d, speed: speedOf(e.id) };
+  }
+  return best || { dmg: FIST, speed: SPEED_FIST };
 }
 
 function unit2(a) {
@@ -62,7 +74,7 @@ function unit2(a) {
 function check(att, vic, ws, data, now, roomName) {
   if (!vic) return { ok: false, why: "gone" };
   const r = roomName || "";
-  const pvpRoom = r === "arena" || r === "smp" || r.startsWith("m-") || r.startsWith("d-") || r.startsWith("p-");
+  const pvpRoom = r === "arena" || r === "crystal" || r === "smp" || r.startsWith("m-") || r.startsWith("d-") || r.startsWith("p-");
   if (!pvpRoom) return { ok: false, why: "room" };
   if (att.pst && (att.pst.spec || att.pst.hp <= 0)) return { ok: false, why: "att" };
   if (r.startsWith("m-") && att.team && vic.team && att.team === vic.team) return { ok: false, why: "team" };
@@ -87,14 +99,26 @@ function check(att, vic, ws, data, now, roomName) {
   let sdir = unit2(data.sdir);
   if (sdir && !(att.pst && att.pst.sp && fresh(att.pst, now))) sdir = null;
   if (sdir && sdir[0] * dir[0] + sdir[1] * dir[1] < 0) sdir = null;
-  // hasar penceresi (hedef basina, sunucu saati)
-  const dm = !vic.lastDmgAt || now - vic.lastDmgAt >= IFRAME_MS;
-  let dmg = 0;
-  if (dm) {
-    const cap = heldCap(att, now);
-    const cd = Number(data.dmg);
-    dmg = Math.min(Number.isFinite(cd) && cd > 0 ? cd : cap, cap, MAX_DMG);
-    vic.lastDmgAt = now;
+  // v223: 1.9 saldiri bekleme (SUNUCU hesaplar): son vurustan beri gecen sureye gore hasar 0.2..1.0; her vurus bekleme sayacini sifirlar
+  const info = heldInfo(att, now);
+  const fullMs = 1000 / info.speed;
+  const sinceMs = att.lastAtkAt ? now - att.lastAtkAt + 50 : 1e9;      // +50 ms: ag titremesi payi
+  att.lastAtkAt = now;
+  const scale = Math.min(1, Math.max(0, (sinceMs + 25) / fullMs));
+  // kritik: bekleme dolu (>0.848), kosmuyor; dusme durumunu istemci bildirir (data.cr)
+  const crit = data.cr === true && scale > 0.848 && !(att.pst && att.pst.sp);
+  if (scale <= 0.9) sdir = null;      // kosu geri tepmesi sadece dolu vurusta
+  const cap = Math.min(info.dmg * (0.2 + scale * scale * 0.8) * (crit ? 1.5 : 1), MAX_DMG);
+  const cd = Number(data.dmg);
+  const want = Math.min(Number.isFinite(cd) && cd > 0 ? cd : cap, cap);
+  // 1.9 / Java dokunulmazlik: pencere (0.5 sn) icinde sadece ONCEKINDEN BUYUK hasar, aradaki FARK kadar vurur; digerleri sayilmaz (geri tepme de yok)
+  const inWin = vic.lastDmgAt && now - vic.lastDmgAt < IFRAME_MS;
+  let dm = true, dmg = want;
+  if (inWin) {
+    if (want > (vic.lastDmgVal || 0) + 0.01) { dmg = want - (vic.lastDmgVal || 0); vic.lastDmgVal = want; }
+    else return { ok: false, why: "iframe" };
+  } else {
+    vic.lastDmgAt = now; vic.lastDmgVal = want;
   }
   return { ok: true, dm, dmg, dir, sdir: sdir || [0, 0] };
 }

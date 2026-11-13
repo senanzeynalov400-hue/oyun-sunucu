@@ -5,6 +5,7 @@ const { WebSocketServer } = require("ws");
 const PVP = require("./pvp_check");     // v219: sunucuda vurus dogrulama
 const AUTH = require("./auth");
 const SOCIAL = require("./social");
+const CRY = require("./crystal");            // Crystal Arena: sunucuda tutulan 400x400 kum haritasi, 10 dk'da bir sifirlanir
 const SMP = require("./smp");              // SMP: herkesin ortak, kalici survival dunyasi (sadece degisen bloklar saklanir)
 const AH = require("./ah");                  // SMP: /ah (oyuncu pazari) + /sell (Dinar)
 const ISLANDS = require("./islands");      // v204: Skyblock adalari hesapla birlikte sunucuda saklanir
@@ -16,6 +17,7 @@ const LOBBY_MAX = 40;
 const SMP_MAX = 40;              // SMP odasi en fazla 40 kisi
 const SMP_BLOCKS_PER_SEC = 600;  // SMP: oyuncu basina saniyede en fazla bu kadar blok degisikligi (TNT patlamalari icin genis)
 const SMP_BLOCK_REACH = 64;      // SMP: konum paketine gore bu mesafeden uzak blok degisikligi reddedilir
+const CRYSTAL_MAX = 40;          // Crystal Arena: ayni haritada en fazla bu kadar oyuncu
 const ARENA_MAX = 30;            // Arena PvP: herkes ayni acik arenada (eslesme yok)
 const MATCH_SIZE = 2;            // Duels 1v1
 const BW_MAX = 8;               // BedWars: en fazla 8 oyuncu (1/8)
@@ -162,7 +164,7 @@ function statsNow() {
     else if (c.room.startsWith("d-")) duels++;
     else if (c.room.startsWith("p-")) pillars++;
   }
-  return { type: "stats", bedwars, duels, pillars, lobby: (rooms.get("lobby") || new Set()).size, arena: (rooms.get("arena") || new Set()).size, smp: (rooms.get("smp") || new Set()).size, online: clients.size };
+  return { type: "stats", bedwars, duels, pillars, lobby: (rooms.get("lobby") || new Set()).size, arena: (rooms.get("arena") || new Set()).size, crystal: (rooms.get("crystal") || new Set()).size, smp: (rooms.get("smp") || new Set()).size, online: clients.size };
 }
 // v203: SKYBLOCK ada ziyareti. Ada sahibin telefonunda durur; sunucu sadece "s-<sahip>" odasi acar ve mesajlari iletir (oyunu simule etmez, ada verisi saklamaz).
 // Ziyaret kurali: ada sahibi o an adasinda ve cevrimici olmali; ziyaretci sahibin ARKADASI (ya da OP) olmali; odada en fazla ISLAND_MAX kisi.
@@ -429,17 +431,25 @@ wss.on("connection", (ws) => {
       case "join_arena": {
         if (REQUIRE_LOGIN && !c.authed) { send(ws, { type: "error", message: "Giris gerekli" }); break; }
         dequeue(ws);
-        const arena = rooms.get("arena");
-        if (arena && arena.size >= ARENA_MAX && !arena.has(ws)) {
-          send(ws, { type: "error", message: "Arena dolu" });
+        const isCry = msg.kind === "crystal";           // Crystal Arena: ayri oda, harita sunucuda
+        const roomName = isCry ? "crystal" : "arena";
+        const arena = rooms.get(roomName);
+        if (arena && arena.size >= (isCry ? CRYSTAL_MAX : ARENA_MAX) && !arena.has(ws)) {
+          send(ws, { type: "error", message: isCry ? "Crystal Arena dolu" : "Arena dolu" });
           break;
         }
-        joinRoom(ws, "arena");
-        send(ws, { type: "arena_joined", you: c.id, players: listOf("arena") });
+        joinRoom(ws, roomName);
+        if (isCry) {
+          send(ws, { type: "arena_joined", you: c.id, players: listOf("crystal"), crystal: true, reset_in: CRY.resetIn() });
+          const myRoom = c.room;
+          CRY.sendAll(ws, send, () => c.room === myRoom && ws.readyState === 1);
+        } else {
+          send(ws, { type: "arena_joined", you: c.id, players: listOf("arena") });
+        }
         break;
       }
       case "leave_arena":
-        if (c.room === "arena") leaveRoom(ws);
+        if (c.room === "arena" || c.room === "crystal") leaveRoom(ws);
         break;
       case "find_match": {
         if (REQUIRE_LOGIN && !c.authed) { send(ws, { type: "error", message: "Giris gerekli" }); break; }
@@ -517,6 +527,20 @@ wss.on("connection", (ws) => {
           const matchWorld = msg.data.wt === 4 || msg.data.wt === 5 || msg.data.wt === 8;
           if (inMatchRoom !== matchWorld) break;
         }
+        if (c.room === "crystal") {              // Crystal Arena: harita sunucuda; blok / kristal degisiklikleri dogrulanir ve saklanir, gecersizi kimseye gitmez
+          const k = msg.data.kind;
+          const nowC = Date.now();
+          if (k === "block") {
+            if (!CRY.rateOk(c, nowC) || !CRY.reachOk(c, msg.data.x, msg.data.y, msg.data.z, nowC)) break;
+            if (!CRY.setBlock(msg.data.x, msg.data.y, msg.data.z, msg.data.id)) break;
+          } else if (k === "cr_place") {
+            if (!CRY.rateOk(c, nowC) || !CRY.reachOk(c, msg.data.x, msg.data.y, msg.data.z, nowC)) break;
+            if (!CRY.placeCrystal(msg.data.x, msg.data.y, msg.data.z)) break;
+          } else if (k === "cr_boom") {
+            if (!CRY.rateOk(c, nowC)) break;
+            if (!CRY.boomCrystal(msg.data.x, msg.data.y, msg.data.z)) break;
+          }
+        }
         if (c.room === "smp" && msg.data.kind === "block") {      // SMP: degisen blok dogrulanir, kalici kaydedilir; reddedilen blok kimseye iletilmez
           const nowB = Date.now();
           if (!c.bl || nowB - c.bl.t >= 1000) c.bl = { t: nowB, n: 0 };
@@ -588,6 +612,9 @@ setInterval(() => {      // 25 sn boyunca hic pong gelmediyse baglanti olu
   }
 }, 25000);
 
+CRY.start((ms) => {      // her 10 dk: harita sifirlandi -> odadaki herkes yeni haritaya gecer
+  for (const w of rooms.get("crystal") || []) send(w, { type: "crystal_reset", reset_in: ms });
+});
 server.listen(PORT, () => console.log("MoMinecraft sunucu hazir, port " + PORT));
 
 // Render yeniden baslatirken (SIGTERM) SMP blok degisikliklerini yaz
