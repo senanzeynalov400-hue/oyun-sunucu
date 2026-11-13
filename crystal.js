@@ -7,12 +7,14 @@ const HALF = 200;
 const BEDROCK_Y = 30;
 const GROUND_Y = 60;
 const MAX_Y = 127;
+const SAFE_R = 12;                   // v224: ortadaki kirmizi guvenli bolge (istemci crystal_map.gd SAFE_R ile ayni): blok / kristal degisikligi kabul edilmez
+const inSafe = (x, z) => Math.abs(x) <= SAFE_R && Math.abs(z) <= SAFE_R;
 const AIR = 0, SAND = 4, BEDROCK = 12, OBSIDIAN = 50;
 const RESET_MS = (Number(process.env.CRYSTAL_RESET_MIN) || 10) * 60 * 1000;
 const MAX_BLOCKS = 400000;           // bellek sigortasi
 const MAX_CRYSTALS = 600;
 const BLOCK_REACH = 16;              // konum paketine gore bu mesafeden uzak blok degisikligi reddedilir
-const BLOCKS_PER_SEC = 60;
+const BLOCKS_PER_SEC = 120;          // v224: hizli kristal koy / patlat (zincir patlamalar dahil) takilmasin
 const SEND_CHUNK = 1500;
 
 const blocks = new Map();            // "x,y,z" -> blok id (arazinin KENDISINDEN farkli olanlar)
@@ -38,6 +40,7 @@ function setBlock(x, y, z, id) {
   x = Number(x); y = Number(y); z = Number(z); id = Number(id);
   if (!inBounds(x, y, z) || !Number.isInteger(id) || id < 0 || id > 255) return false;
   if (y <= BEDROCK_Y) return false;                      // bedrock ve alti degismez
+  if (inSafe(x, z)) return false;                        // guvenli bolge kirilmaz / konmaz
   if (id === BEDROCK) return false;
   const k = key(x, y, z);
   if (id === baseAt(y)) blocks.delete(k);
@@ -63,7 +66,7 @@ function reachOk(c, x, y, z, now) {
 // End kristali: sadece obsidyen / bedrock USTUNE konur, hucre bos olmali
 function placeCrystal(x, y, z) {
   x = Number(x); y = Number(y); z = Number(z);
-  if (!inBounds(x, y, z) || y <= BEDROCK_Y || crystals.size >= MAX_CRYSTALS) return false;
+  if (!inBounds(x, y, z) || y <= BEDROCK_Y || inSafe(x, z) || crystals.size >= MAX_CRYSTALS) return false;
   if (crystals.has(key(x, y, z)) || blockAt(x, y, z) !== AIR) return false;
   const below = blockAt(x, y - 1, z);
   if (below !== OBSIDIAN && below !== BEDROCK) return false;
