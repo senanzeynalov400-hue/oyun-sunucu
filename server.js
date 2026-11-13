@@ -6,6 +6,7 @@ const PVP = require("./pvp_check");     // v219: sunucuda vurus dogrulama
 const AUTH = require("./auth");
 const SOCIAL = require("./social");
 const SMP = require("./smp");              // SMP: herkesin ortak, kalici survival dunyasi (sadece degisen bloklar saklanir)
+const AH = require("./ah");                  // SMP: /ah (oyuncu pazari) + /sell (Dinar)
 const ISLANDS = require("./islands");      // v204: Skyblock adalari hesapla birlikte sunucuda saklanir
 const REQUIRE_LOGIN = process.env.REQUIRE_LOGIN !== "0";   // giris yapmayan oyuncu lobiye / eslesmeye giremez
 
@@ -13,6 +14,8 @@ const PORT = process.env.PORT || 3000;
 const STATE_BACKLOG_MAX = 8192;     // bir istemcide bu kadar bayttan fazla gonderilmemis veri varsa konum paketleri atlanir
 const LOBBY_MAX = 40;
 const SMP_MAX = 40;              // SMP odasi en fazla 40 kisi
+const SMP_BLOCKS_PER_SEC = 600;  // SMP: oyuncu basina saniyede en fazla bu kadar blok degisikligi (TNT patlamalari icin genis)
+const SMP_BLOCK_REACH = 64;      // SMP: konum paketine gore bu mesafeden uzak blok degisikligi reddedilir
 const ARENA_MAX = 30;            // Arena PvP: herkes ayni acik arenada (eslesme yok)
 const MATCH_SIZE = 2;            // Duels 1v1
 const BW_MAX = 8;               // BedWars: en fazla 8 oyuncu (1/8)
@@ -23,14 +26,13 @@ const BW_TEAM_ORDER = [3, 5, 2, 4, 0, 6, 1, 7];   // SOLO: her oyuncu ayri takim
 let nextId = 1;
 const clients = new Map();   // ws -> {id, name, room, alive}
 const rooms = new Map();     // oda adi -> Set<ws>     ("lobby" ve "m-xxxx")
-const queues = { bedwars: [], bedwars_siege: [], bedwars_pirate: [], bedwars_frost: [], bedwars_citadel: [], bedwars_sky: [], duels: [], pillars: [] };   // oyuna gore eslesme bekleyenler (ws)
+const queues = { bedwars: [], bedwars_siege: [], bedwars_pirate: [], bedwars_frost: [], bedwars_citadel: [], duels: [], pillars: [] };   // oyuna gore eslesme bekleyenler (ws)
 // v184: BedWars ve PILLARS ayni bekleme odasi mantigini kullanir (1/8, 2 oyuncuda 30 sn sayim, 8 oyuncuda hemen)
 const GROUPS = {
   bedwars: { max: BW_MAX, min: BW_MIN, cd: BW_COUNTDOWN, prefix: "m-", order: BW_TEAM_ORDER, timer: null, startAt: 0 },
   bedwars_siege: { max: BW_MAX, min: BW_MIN, cd: BW_COUNTDOWN, prefix: "m-", order: BW_TEAM_ORDER, timer: null, startAt: 0 },   // Siege haritasi: ayri bekleme odasi (harita karismasin)
   bedwars_pirate: { max: BW_MAX, min: BW_MIN, cd: BW_COUNTDOWN, prefix: "m-", order: BW_TEAM_ORDER, timer: null, startAt: 0 },   // Pirate Isles haritasi: ayri bekleme odasi
   bedwars_frost: { max: BW_MAX, min: BW_MIN, cd: BW_COUNTDOWN, prefix: "m-", order: BW_TEAM_ORDER, timer: null, startAt: 0 },   // Frostdune haritasi: ayri bekleme odasi
-  bedwars_sky: { max: BW_MAX, min: BW_MIN, cd: BW_COUNTDOWN, prefix: "m-", order: BW_TEAM_ORDER, timer: null, startAt: 0 },   // Sky Islands haritasi
   bedwars_citadel: { max: BW_MAX, min: BW_MIN, cd: BW_COUNTDOWN, prefix: "m-", order: BW_TEAM_ORDER, timer: null, startAt: 0 },   // Stone Citadel haritasi: ayri bekleme odasi (harita karismasin)
   pillars: { max: 8, min: 2, cd: 30, prefix: "p-", order: [0, 1, 2, 3, 4, 5, 6, 7], timer: null, startAt: 0 },   // order = sutun sirasi
 };
@@ -47,7 +49,7 @@ function qBroadcast(g) {
   // v183: eslesme ekraninda herkes kendi skiniyle gorunsun -> her oyuncunun kiyafeti + rozeti de gider
   const players = q.map((w) => { const c = clients.get(w) || {}; return { id: c.id || 0, name: c.name || "Oyuncu", rank: c.rank || "", outfit: c.outfit || null }; });
   const left = G.timer ? Math.max(0, Math.ceil((G.startAt - Date.now()) / 1000)) : -1;
-  q.forEach((w) => send(w, { type: "queue", game: (g === "bedwars_siege" || g === "bedwars_pirate" || g === "bedwars_frost" || g === "bedwars_citadel" || g === "bedwars_sky") ? "bedwars" : g, count: q.length, need: G.max, min: G.min, countdown: left, names, players }));
+  q.forEach((w) => send(w, { type: "queue", game: (g === "bedwars_siege" || g === "bedwars_pirate" || g === "bedwars_frost" || g === "bedwars_citadel") ? "bedwars" : g, count: q.length, need: G.max, min: G.min, countdown: left, names, players }));
 }
 function qUpdate(g) {
   const G = GROUPS[g];
@@ -71,7 +73,7 @@ function qStart(g) {
   group.forEach((w, i) => { clients.get(w).team = G.order[i % G.order.length]; });
   group.forEach((w) => joinRoom(w, code));
   const players = listOf(code);
-  group.forEach((w) => send(w, { type: "match_found", code, game: (g === "bedwars_siege" || g === "bedwars_pirate" || g === "bedwars_frost" || g === "bedwars_citadel" || g === "bedwars_sky") ? "bedwars" : g, you: clients.get(w).id, players }));
+  group.forEach((w) => send(w, { type: "match_found", code, game: (g === "bedwars_siege" || g === "bedwars_pirate" || g === "bedwars_frost" || g === "bedwars_citadel") ? "bedwars" : g, you: clients.get(w).id, players }));
   if (queues[g].length > 0) qUpdate(g);
 }
 const bwUpdate = () => qUpdate("bedwars");
@@ -81,6 +83,7 @@ const server = http.createServer(async (req, res) => {
   if (await AUTH.handleHttp(req, res)) return;
   if (await SOCIAL.handleHttp(req, res)) return;
   if (await ISLANDS.handleHttp(req, res)) return;
+  if (await AH.handleHttp(req, res)) return;
   res.writeHead(200, { "Content-Type": "application/json" });
   res.end(JSON.stringify({ ok: true, online: clients.size, lobby: (rooms.get("lobby") || new Set()).size, arena: (rooms.get("arena") || new Set()).size, queue: { bedwars: queues.bedwars.length, duels: queues.duels.length, pillars: queues.pillars.length }, playing: (() => { const s = statsNow(); return { bedwars: s.bedwars, duels: s.duels, pillars: s.pillars }; })() }));
 });
@@ -150,7 +153,7 @@ function send(ws, obj) {
 }
 // Oyunda kac kisi var: BedWars odalari ("m-..."), Duels odalari ("d-...") + eslesme kuyrugunda bekleyenler.
 function statsNow() {
-  let bedwars = queues.bedwars.length + queues.bedwars_siege.length + queues.bedwars_pirate.length + queues.bedwars_frost.length + queues.bedwars_citadel.length + queues.bedwars_sky.length;
+  let bedwars = queues.bedwars.length + queues.bedwars_siege.length + queues.bedwars_pirate.length + queues.bedwars_frost.length + queues.bedwars_citadel.length;
   let duels = queues.duels.length;
   let pillars = queues.pillars.length;
   for (const [, c] of clients) {
@@ -356,6 +359,8 @@ wss.on("connection", (ws) => {
       case "join_smp": {                     // SMP: herkes ayni sabit odaya girer; sunucu degisen tum bloklari girene yollar
         if (REQUIRE_LOGIN && !c.authed) { send(ws, { type: "error", message: "Giris gerekli" }); break; }
         dequeue(ws);
+        await SMP.whenReady();
+        if (SMP.status() !== "ok") { send(ws, { type: "error", message: "SMP yukleniyor, biraz sonra tekrar dene" }); break; }
         const sm = rooms.get("smp");
         if (sm && sm.size >= SMP_MAX && !sm.has(ws)) {
           send(ws, { type: "error", message: "SMP dolu" });
@@ -364,7 +369,30 @@ wss.on("connection", (ws) => {
         joinRoom(ws, "smp");
         send(ws, { type: "lobby_joined", you: c.id, players: listOf("smp") });
         const myRoom = c.room;
-        SMP.sendAll(ws, send, () => c.room === myRoom && ws.readyState === 1).catch((e) => console.error("SMP gonderilemedi", e.message));
+        if (!msg.lazy) SMP.sendAll(ws, send, () => c.room === myRoom && ws.readyState === 1).catch((e) => console.error("SMP gonderilemedi", e.message));   // eski istemci: hepsini it; yeni istemci (lazy) smp_req ile yakin bolgeleri ister
+        break;
+      }
+      case "smp_req": {                      // SMP (lazy): istemci oyuncunun yakinindaki 512x512 bolgeleri ister
+        if (c.room !== "smp" || !Array.isArray(msg.r)) break;
+        { const nq = Date.now(); if (!c.rq || nq - c.rq.t >= 10000) c.rq = { t: nq, n: 0 }; if (++c.rq.n > 30) break; }
+        const list = [];
+        for (const e of msg.r.slice(0, 9)) if (Array.isArray(e) && Number.isInteger(e[0]) && Number.isInteger(e[1]) && Math.abs(e[0]) < 2048 && Math.abs(e[1]) < 2048) list.push([e[0], e[1]]);
+        if (!list.length) break;
+        const rq = c.room;
+        SMP.sendRegions(ws, send, () => c.room === rq && ws.readyState === 1, list);
+        break;
+      }
+      case "smp_load": {                     // SMP: hesaba bagli oyuncu verisi (envanter / home / son konum) sunucudan
+        if (c.room !== "smp" || !c.authed) break;
+        try { const pl = await SMP.getPlayer(c.name); send(ws, { type: "smp_player", d: pl ? pl.d : null, t: pl ? pl.t : 0 }); }
+        catch (e) { console.error("SMP oyuncu verisi okunamadi", e.message); }      // cevap yok: istemci zaman asimiyla yerel devam eder, yukleme yapmaz
+        break;
+      }
+      case "smp_save": {
+        if (c.room !== "smp" || !c.authed) break;
+        const nsv = Date.now(); if (c.ps && nsv - c.ps < 4000) break; c.ps = nsv;
+        try { const t = await SMP.setPlayer(c.name, msg.d); if (t) send(ws, { type: "smp_saved", t }); }
+        catch (e) { console.error("SMP oyuncu verisi yazilamadi", e.message); }
         break;
       }
       case "leave_lobby":
@@ -417,10 +445,10 @@ wss.on("connection", (ws) => {
         if (REQUIRE_LOGIN && !c.authed) { send(ws, { type: "error", message: "Giris gerekli" }); break; }
         leaveRoom(ws);                       // lobiden cik
         dequeue(ws);
-        const game = msg.game === "duels" ? "duels" : (msg.game === "pillars" ? "pillars" : (Number(msg.map) === 5 ? "bedwars_sky" : Number(msg.map) === 4 ? "bedwars_citadel" : (Number(msg.map) === 3 ? "bedwars_frost" : (Number(msg.map) === 2 ? "bedwars_pirate" : (Number(msg.map) === 1 ? "bedwars_siege" : "bedwars")))));   // eski istemci game gondermez -> bedwars
+        const game = msg.game === "duels" ? "duels" : (msg.game === "pillars" ? "pillars" : (Number(msg.map) === 4 ? "bedwars_citadel" : (Number(msg.map) === 3 ? "bedwars_frost" : (Number(msg.map) === 2 ? "bedwars_pirate" : (Number(msg.map) === 1 ? "bedwars_siege" : "bedwars")))));   // eski istemci game gondermez -> bedwars
         const queue = queues[game];
         queue.push(ws);
-        if (game === "bedwars" || game === "bedwars_siege" || game === "bedwars_pirate" || game === "bedwars_frost" || game === "bedwars_citadel" || game === "bedwars_sky" || game === "pillars") {
+        if (game === "bedwars" || game === "bedwars_siege" || game === "bedwars_pirate" || game === "bedwars_frost" || game === "bedwars_citadel" || game === "pillars") {
           qUpdate(game);
           break;
         }
@@ -461,7 +489,6 @@ wss.on("connection", (ws) => {
           if (queues.bedwars_pirate.includes(ws)) qBroadcast("bedwars_pirate");
           if (queues.bedwars_frost.includes(ws)) qBroadcast("bedwars_frost");
           if (queues.bedwars_citadel.includes(ws)) qBroadcast("bedwars_citadel");
-          if (queues.bedwars_sky.includes(ws)) qBroadcast("bedwars_sky");
           if (queues.pillars.includes(ws)) qBroadcast("pillars");
         }
         break;
@@ -490,7 +517,31 @@ wss.on("connection", (ws) => {
           const matchWorld = msg.data.wt === 4 || msg.data.wt === 5 || msg.data.wt === 8;
           if (inMatchRoom !== matchWorld) break;
         }
-        if (c.room === "smp" && msg.data.kind === "block") SMP.setBlock(msg.data.x, msg.data.y, msg.data.z, msg.data.id);   // SMP: degisen blok kalici kaydedilir
+        if (c.room === "smp" && msg.data.kind === "block") {      // SMP: degisen blok dogrulanir, kalici kaydedilir; reddedilen blok kimseye iletilmez
+          const nowB = Date.now();
+          if (!c.bl || nowB - c.bl.t >= 1000) c.bl = { t: nowB, n: 0 };
+          if (++c.bl.n > SMP_BLOCKS_PER_SEC) break;                                   // hileli istemci seli
+          const ps = c.pst;
+          if (ps && Array.isArray(ps.p) && nowB - ps.t < 5000 && Math.hypot(Number(msg.data.x) - ps.p[0], Number(msg.data.y) - ps.p[1], Number(msg.data.z) - ps.p[2]) > SMP_BLOCK_REACH) break;   // cok uzaktan blok (patlamalar icin genis)
+          if (!SMP.setBlock(msg.data.x, msg.data.y, msg.data.z, msg.data.id)) break;  // gecersiz kimlik / koordinat / blok siniri dolu
+        }
+        // SMP: tpa_* ve smp_kill paketleri sunucuda yeniden yazilir: gonderen adi sunucudan (sahte "from"/"victim" olamaz), koordinatlar dogrulanir
+        if (c.room === "smp" && (msg.data.kind === "tpa_req" || msg.data.kind === "tpa_ok" || msg.data.kind === "tpa_no")) {
+          const ntp = Date.now(); if (!c.tpr || ntp - c.tpr.t >= 10000) c.tpr = { t: ntp, n: 0 }; if (++c.tpr.n > 10) break;
+          const d2 = { kind: msg.data.kind, to: String(msg.data.to || "").slice(0, 24), from: String(c.name) };
+          if (msg.data.kind === "tpa_ok") {
+            const pp = msg.data.p;
+            if (!Array.isArray(pp) || pp.length !== 3 || !pp.every((v) => typeof v === "number" && Number.isFinite(v) && Math.abs(v) < 1000000) || pp[1] < -8 || pp[1] > 140) break;
+            d2.p = pp;
+          }
+          msg.data = d2;
+        } else if (c.room === "smp" && msg.data.kind === "smp_kill") {
+          const nk = Date.now(); if (c.kl && nk - c.kl < 3000) break; c.kl = nk;
+          const kn = String(msg.data.killer || "").slice(0, 24).toLowerCase();
+          let killer = "";
+          if (kn) for (const w2 of set) { const c2 = clients.get(w2); if (c2 && c2.authed && String(c2.name).toLowerCase() === kn) { killer = String(c2.name); break; } }
+          msg.data = { kind: "smp_kill", killer, victim: String(c.name) };
+        }
         // v219: konum paketinden menzil / dokunulmazlik bilgisi tutulur; duel_hit sunucuda dogrulanir (sayilirsa hedefe, sayilmazsa vurana hit_ack ok:false)
         if (msg.data.kind === "player_state") {
           PVP.onState(c, msg.data, Date.now());
@@ -541,5 +592,5 @@ server.listen(PORT, () => console.log("MoMinecraft sunucu hazir, port " + PORT))
 
 // Render yeniden baslatirken (SIGTERM) SMP blok degisikliklerini yaz
 for (const sig of ["SIGTERM", "SIGINT"]) {
-  process.on(sig, () => { SMP.flush().finally(() => process.exit(0)); setTimeout(() => process.exit(0), 8000).unref(); });
+  process.on(sig, () => { Promise.all([SMP.flush(), AH.flush()]).finally(() => process.exit(0)); setTimeout(() => process.exit(0), 8000).unref(); });
 }

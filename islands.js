@@ -323,4 +323,30 @@ async function purge(key) {                  // hesap silinince
 }
 AUTH.setIslandHooks({ export: exportAll, import: importAll, purge });
 
-module.exports = { handleHttp, get, put, all, keyOf, stats, wAll, wGet, ensureWallet, importAll, calcPoints, levelOf };
+
+// ---------------------------------------------------------------- SMP /ah + /sell icin Dinar islemleri (atomik, kilitli)
+// Cuzdani olmayan oyuncuya (adasi olmayan SMP oyuncusu) cuzdan 0 Dinar ile acilir.
+const blankW = () => ({ dinar: 0, maxlv: 0, level: 0, points: 0 });
+function walletBalance(key) { return locked(async () => ((await wGet(key)) || blankW()).dinar); }
+function walletCredit(key, amount) {
+  amount = Math.floor(Number(amount));
+  if (!Number.isFinite(amount) || amount < 1) return Promise.resolve(null);
+  return locked(async () => { const w = (await wGet(key)) || blankW(); w.dinar += amount; return wPut(key, w); });
+}
+// from -> to: yetmezse { ok:false }. Ikisi tek kilitte: para ne kaybolur ne cogalir.
+function walletTransfer(fromKey, toKey, amount) {
+  amount = Math.floor(Number(amount));
+  if (!Number.isFinite(amount) || amount < 1) return Promise.resolve({ ok: false });
+  return locked(async () => {
+    const a = (await wGet(fromKey)) || blankW();
+    if (a.dinar < amount) return { ok: false, dinar: a.dinar };
+    a.dinar -= amount;
+    if (fromKey === toKey) return { ok: true, dinar: (await wPut(fromKey, a)).dinar };
+    const b = (await wGet(toKey)) || blankW();
+    b.dinar += amount;
+    await wPut(toKey, b);
+    return { ok: true, dinar: (await wPut(fromKey, a)).dinar };
+  });
+}
+
+module.exports = { walletBalance, walletCredit, walletTransfer, readBody, handleHttp, get, put, all, keyOf, stats, wAll, wGet, ensureWallet, importAll, calcPoints, levelOf };
