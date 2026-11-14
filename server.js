@@ -588,6 +588,19 @@ wss.on("connection", (ws) => {
           let killer = "";
           if (kn) for (const w2 of set) { const c2 = clients.get(w2); if (c2 && c2.authed && String(c2.name).toLowerCase() === kn) { killer = String(c2.name); break; } }
           msg.data = { kind: "smp_kill", killer, victim: String(c.name) };
+        } else if (c.room === "smp" && msg.data.kind === "smp_drop") {
+          // SMP: olum dususu. Alanlar sunucuda yeniden yazilir; hiz siniri (olumde ~50 yigin birden gelebilir) asilirsa paket dusurulur
+          const nd = Date.now(); if (!c.dr || nd - c.dr.t >= 10000) c.dr = { t: nd, n: 0 }; if (++c.dr.n > 150) break;
+          const dd = msg.data;
+          const okv = (a, lim) => Array.isArray(a) && a.length === 3 && a.every((v) => typeof v === "number" && Number.isFinite(v) && Math.abs(v) < lim);
+          const did = Number(dd.id), dn = Number(dd.n), du = Number(dd.u);
+          if (!Number.isInteger(did) || did < 1 || did > 255 || !Number.isInteger(dn) || dn < 1 || dn > 64 || !Number.isInteger(du) || du < 0 || du > 2e9 || !okv(dd.p, 1000000) || !okv(dd.v, 12)) break;
+          msg.data = { kind: "smp_drop", u: du, id: did, n: dn, p: dd.p, v: dd.v };
+        } else if (c.room === "smp" && msg.data.kind === "smp_take") {
+          const nt = Date.now(); if (!c.tk || nt - c.tk.t >= 10000) c.tk = { t: nt, n: 0 }; if (++c.tk.n > 300) break;
+          const tu = Number(msg.data.u);
+          if (!Number.isInteger(tu) || tu < 0 || tu > 2e9) break;
+          msg.data = { kind: "smp_take", u: tu };
         }
         // v219: konum paketinden menzil / dokunulmazlik bilgisi tutulur; duel_hit sunucuda dogrulanir (sayilirsa hedefe, sayilmazsa vurana hit_ack ok:false)
         if (msg.data.kind === "player_state") {
