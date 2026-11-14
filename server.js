@@ -6,6 +6,7 @@ const PVP = require("./pvp_check");     // v219: sunucuda vurus dogrulama
 const AUTH = require("./auth");
 const SOCIAL = require("./social");
 const CRY = require("./crystal");            // Crystal Arena: sunucuda tutulan 400x400 kum haritasi, 10 dk'da bir sifirlanir
+const SMPC = require("./smp_chests");      // v234: SMP sandik icerigi (sunucuda kalici)
 const SMP = require("./smp");              // SMP: herkesin ortak, kalici survival dunyasi (sadece degisen bloklar saklanir)
 const AH = require("./ah");                  // SMP: /ah (oyuncu pazari) + /sell (Dinar)
 const ISLANDS = require("./islands");      // v204: Skyblock adalari hesapla birlikte sunucuda saklanir
@@ -390,6 +391,27 @@ wss.on("connection", (ws) => {
         catch (e) { console.error("SMP oyuncu verisi okunamadi", e.message); }      // cevap yok: istemci zaman asimiyla yerel devam eder, yukleme yapmaz
         break;
       }
+      case "smp_chest_get": {                // v234: SMP sandik icerigi + yonu
+        if (c.room !== "smp") break;
+        { const ng = Date.now(); if (!c.cg || ng - c.cg.t >= 10000) c.cg = { t: ng, n: 0 }; if (++c.cg.n > 300) break; }
+        const cx = Number(msg.x), cy = Number(msg.y), cz = Number(msg.z);
+        if (![cx, cy, cz].every(Number.isInteger)) break;
+        send(ws, { type: "smp_chest", x: cx, y: cy, z: cz, d: SMPC.get(cx, cy, cz) });
+        break;
+      }
+      case "smp_chest_set": {                // v234: sandik kapatilinca / koyulunca tam icerik gelir; sunucu dogrular, saklar, odadakilere yayar
+        if (c.room !== "smp" || !c.authed) break;
+        { const ns = Date.now(); if (!c.cs || ns - c.cs.t >= 10000) c.cs = { t: ns, n: 0 }; if (++c.cs.n > 30) break; }
+        const sx = Number(msg.x), sy = Number(msg.y), sz = Number(msg.z);
+        if (![sx, sy, sz].every(Number.isInteger)) break;
+        const psc = c.pst;
+        if (psc && Array.isArray(psc.p) && Date.now() - psc.t < 5000 && Math.hypot(sx - psc.p[0], sy - psc.p[1], sz - psc.p[2]) > SMP_BLOCK_REACH) break;
+        const rec = SMPC.set(sx, sy, sz, { i: msg.i, c: msg.c, t: msg.t });
+        if (!rec) break;
+        const roomSet = rooms.get("smp");
+        if (roomSet) for (const w of roomSet) if (w !== ws) send(w, { type: "smp_chest", x: sx, y: sy, z: sz, d: rec });
+        break;
+      }
       case "smp_save": {
         if (c.room !== "smp" || !c.authed) break;
         const nsv = Date.now(); if (c.ps && nsv - c.ps < 4000) break; c.ps = nsv;
@@ -548,6 +570,7 @@ wss.on("connection", (ws) => {
           const ps = c.pst;
           if (ps && Array.isArray(ps.p) && nowB - ps.t < 5000 && Math.hypot(Number(msg.data.x) - ps.p[0], Number(msg.data.y) - ps.p[1], Number(msg.data.z) - ps.p[2]) > SMP_BLOCK_REACH) break;   // cok uzaktan blok (patlamalar icin genis)
           if (!SMP.setBlock(msg.data.x, msg.data.y, msg.data.z, msg.data.id)) break;  // gecersiz kimlik / koordinat / blok siniri dolu
+          if (Number(msg.data.id) !== SMPC.CHEST_ID) SMPC.remove(Number(msg.data.x), Number(msg.data.y), Number(msg.data.z));      // v234: sandik kirildi / yerine baska blok geldi: icerik kaydi silinir
         }
         // SMP: tpa_* ve smp_kill paketleri sunucuda yeniden yazilir: gonderen adi sunucudan (sahte "from"/"victim" olamaz), koordinatlar dogrulanir
         if (c.room === "smp" && (msg.data.kind === "tpa_req" || msg.data.kind === "tpa_ok" || msg.data.kind === "tpa_no")) {
@@ -619,5 +642,5 @@ server.listen(PORT, () => console.log("MoMinecraft sunucu hazir, port " + PORT))
 
 // Render yeniden baslatirken (SIGTERM) SMP blok degisikliklerini yaz
 for (const sig of ["SIGTERM", "SIGINT"]) {
-  process.on(sig, () => { Promise.all([SMP.flush(), AH.flush()]).finally(() => process.exit(0)); setTimeout(() => process.exit(0), 8000).unref(); });
+  process.on(sig, () => { Promise.all([SMP.flush(), AH.flush(), SMPC.flush()]).finally(() => process.exit(0)); setTimeout(() => process.exit(0), 8000).unref(); });
 }

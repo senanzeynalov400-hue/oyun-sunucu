@@ -8,7 +8,7 @@ const AUTH = require("./auth");
 const ISL = require("./islands");
 const PRICES = require("./ah_prices.json");      // esya kimligi -> /sell Dinar fiyati (tools/gen_ah_prices.py)
 
-const MAX_ID = 274;                  // blocks.gd BLOCK_COUNT - 1
+const MAX_ID = 275;                  // blocks.gd BLOCK_COUNT - 1 (v234: 274 idi -> Uc Kristali (275) /sell'de sessizce kayboluyordu)
 const MAX_STACK = 64;
 const MAX_PRICE = 1000000000;
 const MAX_LISTINGS = 25;             // oyuncu basina
@@ -137,7 +137,7 @@ async function handleHttp(req, res) {
           let total = 0; const sold = [], back = [];
           for (const it of list) {
             const id = Math.floor(Number(it && it[0])), n = Math.floor(Number(it && it[1]));
-            if (!okItem(id, n)) continue;
+            if (!okItem(id, n)) { if (Number.isInteger(id) && id >= 1 && Number.isInteger(n) && n >= 1) back.push([id, Math.min(n, MAX_STACK)]); continue; }   // v234: gecersiz esya sessizce silinmez, geri verilir
             const p = PRICES[String(id)] || 0;
             if (p > 0) { total += p * n; sold.push([id, n]); } else back.push([id, n]);
           }

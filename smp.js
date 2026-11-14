@@ -378,6 +378,16 @@ function setBlock(x, y, z, id) {
   return ok;
 }
 
+// v234: sunucudaki kayitli blok kimligi (yoksa -1: dogal arazi / degistirilmemis)
+function getBlock(x, y, z) {
+  x = Number(x); y = Number(y); z = Number(z);
+  if (!Number.isInteger(x) || !Number.isInteger(y) || !Number.isInteger(z)) return -1;
+  const r = regions.get(ridOf(x >> REGION_SHIFT, z >> REGION_SHIFT));
+  if (!r) return -1;
+  const v = r.m.get(keyOf(x, y, z));
+  return v === undefined ? -1 : v;
+}
+
 // Bir bolgenin tum bloklarini parca parca gonderir (gonderirken guncel deger okunur). false = iptal (oyuncu cikti / yeni istek).
 async function streamRegion(ws, send, r, cur) {
   const keys = Array.from(r.m.keys());
@@ -496,7 +506,7 @@ const stats = () => ({ state, blocks: total, regions: regions.size, dirty: dirty
 
 initLoad();
 
-module.exports = { setBlock, sendAll, sendRegions, getPlayer, setPlayer, flush, count, status, whenReady, stats, backup, listBackups, restoreBackup };
+module.exports = { getBlock, setBlock, sendAll, sendRegions, getPlayer, setPlayer, flush, count, status, whenReady, stats, backup, listBackups, restoreBackup };
 
 // ---------------------------------------------------------------- komut satiri
 if (require.main === module) {
