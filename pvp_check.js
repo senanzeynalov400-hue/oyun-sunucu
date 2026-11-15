@@ -7,6 +7,7 @@
 //  * geri tepme yonu: sunucudaki konumlardan hesaplanir; istemcinin dir'i sadece makul ise (ayni yarim kure) kullanilir
 //  * sprint bonusu (sdir): saldirgan gercekten kosuyorsa
 // Sayilan vurus hedefe iletilir ("srv":true), her vurus icin VURANA hit_ack doner (ok, dm).
+const NO_COOLDOWN = true;    // v238: true = 1.8 tarzi: saldiri bekleme carpani yok (istemci pvp_consts.gd ATK_COOLDOWN := false ile ayni)
 const IFRAME_MS = 500;       // hasar penceresi (MC: 10 tick). Pencere icindeki vurus sadece geri tepme verir
 const MIN_GAP_MS = 45;       // ayni saldirgandan iki vurus arasi en az (~22 CPS ustu reddedilir)
 const MAX_PER_SEC = 22;
@@ -104,7 +105,7 @@ function check(att, vic, ws, data, now, roomName) {
   const fullMs = 1000 / info.speed;
   const sinceMs = att.lastAtkAt ? now - att.lastAtkAt + 50 : 1e9;      // +50 ms: ag titremesi payi
   att.lastAtkAt = now;
-  const scale = Math.min(1, Math.max(0, (sinceMs + 25) / fullMs));
+  const scale = NO_COOLDOWN ? 1 : Math.min(1, Math.max(0, (sinceMs + 25) / fullMs));      // v238: NO_COOLDOWN = 1.8 tarzi (hizli tiklamak tam hasar)
   // kritik: bekleme dolu (>0.848), kosmuyor; dusme durumunu istemci bildirir (data.cr)
   const crit = data.cr === true && scale > 0.848 && !(att.pst && att.pst.sp);
   if (scale <= 0.9) sdir = null;      // kosu geri tepmesi sadece dolu vurusta
