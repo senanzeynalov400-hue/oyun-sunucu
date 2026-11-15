@@ -20,7 +20,7 @@ const keyOf = (n) => String(n || "").trim().toLowerCase();
 const dir = process.env.DATA_DIR || path.join(__dirname, "data");
 const file = path.join(dir, "ah_state.json");
 
-let state = { next: 1, listings: [], inbox: {}, sold: {} };   // listings: {id, sk, seller, item, n, price, t}; inbox[key]: [{id, kind, item, n, text}]; sold[key]: {t, sum}
+let state = { next: 1, listings: [], inbox: {}, sold: {}, stats: {} };   // stats[key]: {k: oldurme, d: olme} (SMP scoreboard, KALICI); listings: {id, sk, seller, item, n, price, t}; inbox[key]: [{id, kind, item, n, text}]; sold[key]: {t, sum}
 let dirty = false, pool = null, ready = Promise.resolve();
 if (process.env.DATABASE_URL) {
   const { Pool } = require("pg");
@@ -34,7 +34,7 @@ const loaded = (async () => {
     let txt = null;
     if (pool) { const r = await pool.query("SELECT data FROM ah_state WHERE key='main'"); if (r.rows[0]) txt = r.rows[0].data; }
     else if (fs.existsSync(file)) txt = fs.readFileSync(file, "utf8");
-    if (txt) { const j = JSON.parse(txt); state = { next: j.next || 1, listings: j.listings || [], inbox: j.inbox || {}, sold: j.sold || {} }; }
+    if (txt) { const j = JSON.parse(txt); state = { next: j.next || 1, listings: j.listings || [], inbox: j.inbox || {}, sold: j.sold || {}, stats: j.stats || {} }; }
     console.log("AH: " + state.listings.length + " ilan yuklendi");
   } catch (e) { console.error("AH yuklenemedi", e.message); }
 })();
@@ -68,6 +68,10 @@ setInterval(() => locked(async () => { await loaded; sweep(); }), 60000).unref()
 const pubL = (l) => ({ id: l.id, seller: l.seller, item: l.item, n: l.n, price: l.price, left: Math.max(0, Math.ceil((l.t + LIST_TTL_MS - Date.now()) / 1000)) });
 const okItem = (id, n) => Number.isInteger(id) && id >= 1 && id <= MAX_ID && Number.isInteger(n) && n >= 1 && n <= MAX_STACK;
 
+// SMP scoreboard: kalici Olme / Oldurme sayaclari. Olen oyuncu kendi olumunu bildirir (/ah/death, killer = son 10 sn icinde ona vuran).
+const lastDeath = new Map();          // key -> son olum bildirimi zamani (ayni olumu iki kez saymasin)
+function statOf(key) { return state.stats[key] || (state.stats[key] = { k: 0, d: 0 }); }
+
 async function handleHttp(req, res) {
   const url = (req.url || "").split("?")[0];
   if (req.method !== "POST" || !url.startsWith("/ah/")) return false;
@@ -83,6 +87,19 @@ async function handleHttp(req, res) {
       sweep();
       switch (url) {
         case "/ah/balance": return { ok: true, dinar: await ISL.walletBalance(me) };
+        case "/ah/stats": { const st = statOf(me); return { ok: true, kills: st.k, deaths: st.d, dinar: await ISL.walletBalance(me) }; }
+        case "/ah/death": {
+          const now = Date.now();
+          const st = statOf(me);
+          if (now - (lastDeath.get(me) || 0) >= 3000) {      // 3 sn icinde ikinci bildirim sayilmaz
+            lastDeath.set(me, now);
+            st.d++;
+            const killer = keyOf(String(body.killer || "").slice(0, 16));
+            if (killer && killer !== me) statOf(killer).k++;
+            touch();
+          }
+          return { ok: true, kills: st.k, deaths: st.d };
+        }
         case "/ah/list": {                       // {page, mine, sort}
           let arr = state.listings.filter((l) => (body.mine ? l.sk === me : true));
           const sort = String(body.sort || "new");
