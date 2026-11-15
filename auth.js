@@ -69,7 +69,7 @@ function fileStore() {
   const file = path.join(dir, "users.json");
   let users = {};
   try { users = JSON.parse(fs.readFileSync(file, "utf8")); } catch (e) {}
-  for (const k in users) { const u = users[k]; u.coins = Number(u.coins) || 0; u.gems = Number(u.gems) || 0; u.fire = Number(u.fire) || 0; u.daily_last = Number.isFinite(u.daily_last) ? u.daily_last : -1; u.daily_streak = Number(u.daily_streak) || 0; if (!Array.isArray(u.hats)) u.hats = []; u.op = u.op === true; u.rank = typeof u.rank === "string" ? u.rank : ""; u.mute_until = Number(u.mute_until) || 0; u.mute_by = typeof u.mute_by === "string" ? u.mute_by : ""; u.mute_reason = typeof u.mute_reason === "string" ? u.mute_reason : ""; u.ban_until = Number(u.ban_until) || 0; u.ban_by = typeof u.ban_by === "string" ? u.ban_by : ""; u.ban_reason = typeof u.ban_reason === "string" ? u.ban_reason : ""; }
+  for (const k in users) { const u = users[k]; u.coins = Number(u.coins) || 0; u.gems = Number(u.gems) || 0; u.fire = Number(u.fire) || 0; u.daily_last = Number.isFinite(u.daily_last) ? u.daily_last : -1; u.daily_streak = Number(u.daily_streak) || 0; if (!Array.isArray(u.hats)) u.hats = []; u.op = u.op === true; u.rank = typeof u.rank === "string" ? u.rank : ""; u.mute_until = Number(u.mute_until) || 0; u.mute_by = typeof u.mute_by === "string" ? u.mute_by : ""; u.mute_reason = typeof u.mute_reason === "string" ? u.mute_reason : ""; u.ban_until = Number(u.ban_until) || 0; u.ban_by = typeof u.ban_by === "string" ? u.ban_by : ""; u.ban_reason = typeof u.ban_reason === "string" ? u.ban_reason : ""; u.kufur_warn = Number(u.kufur_warn) || 0; }
   const metaFile = path.join(dir, "meta.json");
   let meta = {};
   try { meta = JSON.parse(fs.readFileSync(metaFile, "utf8")) || {}; } catch (e) {}
@@ -128,6 +128,7 @@ function fileStore() {
     async setRank(key, rank) { const u = users[key]; if (!u) return null; u.rank = rank; save(); return u; },
     async setOp(key, op) { const u = users[key]; if (!u) return null; u.op = !!op; save(); return u; },
     async setMute(key, until, by, reason) { const u = users[key]; if (!u) return null; u.mute_until = until; u.mute_by = by; u.mute_reason = reason; save(); return u; },
+    async setKufurWarn(key, n) { const u = users[key]; if (!u) return null; u.kufur_warn = n; save(); return u; },
     async setBan(key, until, by, reason) { const u = users[key]; if (!u) return null; u.ban_until = until; u.ban_by = by; u.ban_reason = reason; save(); return u; },
     async clearExpiredBans(now) { let n = 0; for (const k in users) { const u = users[k]; if (u.ban_until > 0 && u.ban_until <= now) { u.ban_until = 0; u.ban_by = ""; u.ban_reason = ""; n++; } } if (n) save(); return n; },
     async clearExpiredMutes(now) { let n = 0; for (const k in users) { const u = users[k]; if (u.mute_until > 0 && u.mute_until <= now) { u.mute_until = 0; u.mute_by = ""; u.mute_reason = ""; n++; } } if (n) save(); return n; },
@@ -150,6 +151,7 @@ function pgStore(url) {
     await pool.query("ALTER TABLE users ADD COLUMN IF NOT EXISTS mute_until BIGINT NOT NULL DEFAULT 0");
     await pool.query("ALTER TABLE users ADD COLUMN IF NOT EXISTS mute_by TEXT NOT NULL DEFAULT ''");
     await pool.query("ALTER TABLE users ADD COLUMN IF NOT EXISTS mute_reason TEXT NOT NULL DEFAULT ''");
+    await pool.query("ALTER TABLE users ADD COLUMN IF NOT EXISTS kufur_warn INT NOT NULL DEFAULT 0");
     await pool.query("ALTER TABLE users ADD COLUMN IF NOT EXISTS ban_until BIGINT NOT NULL DEFAULT 0");
     await pool.query("ALTER TABLE users ADD COLUMN IF NOT EXISTS ban_by TEXT NOT NULL DEFAULT ''");
     await pool.query("ALTER TABLE users ADD COLUMN IF NOT EXISTS ban_reason TEXT NOT NULL DEFAULT ''");
@@ -159,7 +161,7 @@ function pgStore(url) {
     await pool.query("ALTER TABLE users ADD COLUMN IF NOT EXISTS pw TEXT NOT NULL DEFAULT ''");
     await pool.query("CREATE TABLE IF NOT EXISTS meta (k TEXT PRIMARY KEY, v TEXT NOT NULL)");
   })();
-  const row = (r) => (r ? { key: r.key, name: r.name, salt: r.salt, hash: r.hash, tokens: r.tokens, coins: Number(r.coins), gems: Number(r.gems), fire: Number(r.fire) || 0, daily_last: r.daily_last == null ? -1 : Number(r.daily_last), daily_streak: Number(r.daily_streak) || 0, hats: r.hats, op: r.op === true, rank: r.rank || "", mute_until: Number(r.mute_until) || 0, mute_by: r.mute_by || "", mute_reason: r.mute_reason || "", ban_until: Number(r.ban_until) || 0, ban_by: r.ban_by || "", ban_reason: r.ban_reason || "", pw: r.pw || "" } : null);
+  const row = (r) => (r ? { key: r.key, name: r.name, salt: r.salt, hash: r.hash, tokens: r.tokens, coins: Number(r.coins), gems: Number(r.gems), fire: Number(r.fire) || 0, daily_last: r.daily_last == null ? -1 : Number(r.daily_last), daily_streak: Number(r.daily_streak) || 0, hats: r.hats, op: r.op === true, rank: r.rank || "", mute_until: Number(r.mute_until) || 0, mute_by: r.mute_by || "", mute_reason: r.mute_reason || "", kufur_warn: Number(r.kufur_warn) || 0, ban_until: Number(r.ban_until) || 0, ban_by: r.ban_by || "", ban_reason: r.ban_reason || "", pw: r.pw || "" } : null);
   return {
     kind: "postgres",
     async dbInfo() {                         // v207: admin > Sunucu: veritabani boyutu
@@ -233,6 +235,7 @@ function pgStore(url) {
     async setRank(key, rank) { await ready; return row((await pool.query("UPDATE users SET rank=$2 WHERE key=$1 RETURNING *", [key, rank])).rows[0]); },
     async setOp(key, op) { await ready; return row((await pool.query("UPDATE users SET op=$2 WHERE key=$1 RETURNING *", [key, !!op])).rows[0]); },
     async setMute(key, until, by, reason) { await ready; return row((await pool.query("UPDATE users SET mute_until=$2, mute_by=$3, mute_reason=$4 WHERE key=$1 RETURNING *", [key, until, by, reason])).rows[0]); },
+    async setKufurWarn(key, n) { await ready; return row((await pool.query("UPDATE users SET kufur_warn=$2 WHERE key=$1 RETURNING *", [key, n])).rows[0]); },
     async setBan(key, until, by, reason) { await ready; return row((await pool.query("UPDATE users SET ban_until=$2, ban_by=$3, ban_reason=$4 WHERE key=$1 RETURNING *", [key, until, by, reason])).rows[0]); },
     async clearExpiredBans(now) { await ready; const r = await pool.query("UPDATE users SET ban_until=0, ban_by='', ban_reason='' WHERE ban_until > 0 AND ban_until <= $1", [now]); return r.rowCount; },
     async clearExpiredMutes(now) { await ready; const r = await pool.query("UPDATE users SET mute_until=0, mute_by='', mute_reason='' WHERE mute_until > 0 AND mute_until <= $1", [now]); return r.rowCount; },
@@ -447,6 +450,22 @@ async function muteSet(body) {
   if (!r) return { status: 404, error: "Oyuncu bulunamadı" };
   notifyMute(r);
   return { status: 200, ok: true, name: r.name, left: Math.ceil(ms / 1000), reason };
+}
+
+// OTOMATIK KUFUR: 1. kufur -> sadece uyari (mesaj gitmez); uyarildiktan sonraki her kufur -> otomatik mute
+// (hafif 30 dk / agir 3 saat). Uyari hakki YENILENMEZ (hesapta kalici). OP'ler muaf.
+const KUFUR_MUTE_MS = { 1: 30 * 60e3, 2: 3 * 3600e3 };
+async function kufurStrike(name, level) {
+  const u = await store.get(String(name || "").trim().toLowerCase());
+  if (!u || u.op === true) return { action: "none" };
+  if (muteInfo(u)) return { action: "muted" };
+  if (!(Number(u.kufur_warn) > 0)) { await store.setKufurWarn(u.key, 1); return { action: "warn" }; }
+  const ms = KUFUR_MUTE_MS[level >= 2 ? 2 : 1];
+  const reason = level >= 2 ? "Ağır küfür" : "Küfür";
+  const r = await store.setMute(u.key, Date.now() + ms, "Otomatik Sistem", reason);
+  if (!r) return { action: "none" };
+  notifyMute(r);
+  return { action: "mute", left: Math.ceil(ms / 1000), reason };
 }
 
 async function unmuteSet(body) {
@@ -830,7 +849,7 @@ function cleanUser(x) {     // yedekteki bir hesabi dogrula + temizle. Gecersizs
     daily_last: intOr(x.daily_last, -1), daily_streak: Math.min(7, Math.max(0, intOr(x.daily_streak, 0))),
     hats: Array.isArray(x.hats) ? x.hats.filter((h) => typeof h === "string" && h.length <= 64).slice(0, 500) : [],
     op: x.op === true, rank: RANKS.includes(x.rank) ? x.rank : "",
-    mute_until: Math.max(0, intOr(x.mute_until, 0)), mute_by: str(x.mute_by, 64), mute_reason: str(x.mute_reason, 200),
+    mute_until: Math.max(0, intOr(x.mute_until, 0)), mute_by: str(x.mute_by, 64), mute_reason: str(x.mute_reason, 200), kufur_warn: Math.max(0, intOr(x.kufur_warn, 0)),
     ban_until: Math.max(0, intOr(x.ban_until, 0)), ban_by: str(x.ban_by, 64), ban_reason: str(x.ban_reason, 200),
     look: str(x.look, 2000), pw: typeof x.sifre === "string" && x.sifre ? encPw(x.sifre.slice(0, 64)) : "", bw_wins: Math.max(0, intOr(x.bw_wins, 0)), bw_points: Math.max(0, intOr(x.bw_points, 0)),
   };
@@ -1499,4 +1518,4 @@ async function handleHttp(req, res) {
   }
 }
 
-module.exports = { setResourceExtra, meta: metaApi, backupDay, discordFile, setExtraExport, setExtraImport, setAdminSay, setStatusProvider, setUserPurge, setIslandHooks, handleHttp, verify, verifyUser, lookupName, setRankListener, setMuteListener, setBanListener, RANKS };
+module.exports = { kufurStrike, setResourceExtra, meta: metaApi, backupDay, discordFile, setExtraExport, setExtraImport, setAdminSay, setStatusProvider, setUserPurge, setIslandHooks, handleHttp, verify, verifyUser, lookupName, setRankListener, setMuteListener, setBanListener, RANKS };

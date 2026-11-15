@@ -4,6 +4,7 @@ const http = require("http");
 const { WebSocketServer } = require("ws");
 const PVP = require("./pvp_check");     // v219: sunucuda vurus dogrulama
 const AUTH = require("./auth");
+const KUFUR = require("./kufur");
 const SOCIAL = require("./social");
 const CRY = require("./crystal");            // Crystal Arena: sunucuda tutulan 400x400 kum haritasi, 10 dk'da bir sifirlanir
 const SMPC = require("./smp_chests");      // v234: SMP sandik icerigi (sunucuda kalici)
@@ -561,6 +562,18 @@ wss.on("connection", (ws) => {
         if (c.mute && msg.data && typeof msg.data === "object" && msg.data.kind === "chat") {
           if (c.mute.until > Date.now()) { send(ws, { type: "chat_muted", ...muteMsg(c.mute) }); break; }
           c.mute = null;      // sure doldu
+        }
+        // OTOMATIK KUFUR FILTRESI (server/kufur.js): 1. kufur = uyari (mesaj gitmez), sonraki = otomatik mute (hafif 30 dk / agir 3 saat)
+        if (msg.data && typeof msg.data === "object" && msg.data.kind === "chat") {
+          const lvl = KUFUR.check(msg.data.text);
+          if (lvl > 0) {
+            let r = { action: "warn" };
+            if (c.authed) { try { r = await AUTH.kufurStrike(c.name, lvl); } catch (e) { console.error("kufur", e); r = { action: "warn" }; } }
+            if (r.action === "warn") send(ws, { type: "chat_warn", text: "⚠ Küfür etmek yasak! Mesajın gönderilmedi. Tekrar küfür edersen susturulacaksın." });
+            else if (r.action === "mute") send(ws, { type: "chat_muted", left: r.left, by: "Otomatik Sistem", reason: r.reason });
+            else if (r.action === "muted") send(ws, { type: "chat_muted", ...muteMsg(c.mute) });
+            if (r.action !== "none") break;
+          }
         }
         const set = c.room && rooms.get(c.room);
         if (!set || !msg.data || typeof msg.data !== "object") break;

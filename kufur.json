@@ -1,0 +1,17 @@
+{
+  "_not": "Kelime ekleyip cikarabilirsin. 'agir' = 3 saat mute, 'hafif' = 30 dk mute. Buyuk/kucuk harf, Turkce karakter (i/ı, s/ş...) ve tekrar eden harf fark etmez. Kural: kelime SONUNA '=' koyarsan SADECE tam o kelime (ekli halleri sayilmaz); '=' yoksa 4+ harfli kelimeler ekli halleriyle de yakalanir (orospuyu, sikerim...). 3 harf ve alti kelimeler zaten tam eslesme ister. 6+ harfli kelimeler bosluklu yazilsa da yakalanir (oro spu).",
+  "agir": [
+    "amk", "aq", "amq", "amina", "aminakoy", "aminakod", "amcik",
+    "orospu", "orspu", "oc=", "pic=", "piclik",
+    "sik=", "sikerim", "sikeyim", "siktir", "sikik", "sikis", "sktr", "sktir", "skeyim", "skerim", "skm=", "mk=", "mq=",
+    "yarrak", "yarak", "tasak", "dasak",
+    "gotveren", "gotlek", "gotunu",
+    "pezevenk", "kahpe", "ibne", "pust", "gavat", "yavsak",
+    "fuck", "bitch", "nigger", "nigga"
+  ],
+  "hafif": [
+    "salak", "aptal", "gerizekali", "gerzek", "dangalak", "ahmak", "budala",
+    "serefsiz", "namussuz", "pislik", "bok=", "boktan",
+    "shit", "bastard", "asshole"
+  ]
+}
