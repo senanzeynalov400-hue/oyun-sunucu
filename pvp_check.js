@@ -8,6 +8,10 @@
 //  * sprint bonusu (sdir): saldirgan gercekten kosuyorsa
 // Sayilan vurus hedefe iletilir ("srv":true), her vurus icin VURANA hit_ack doner (ok, dm).
 const NO_COOLDOWN = true;    // v238: true = 1.8 tarzi: saldiri bekleme carpani yok (istemci pvp_consts.gd ATK_COOLDOWN := false ile ayni)
+const HITSTUN_MS = 450;      // v239: hasar yiyen oyuncu bu sure vuramaz (istemci pvp_consts.gd HITSTUN_MS ile AYNI)
+const COMBO_MAX = 3;         // v239: ust uste hasarli vurus sayisi; asinca stun kalkar (pvp_consts.gd COMBO_MAX)
+const COMBO_RESET_MS = 1000; // v239: bu kadar vurulmazsa kombo sifirlanir
+const STUN_GRACE_MS = 60;    // ag titremesi payi: saldiranin istemcisi stun'i bizden gec baslatir
 const IFRAME_MS = 500;       // hasar penceresi (MC: 10 tick). Pencere icindeki vurus sadece geri tepme verir
 const MIN_GAP_MS = 45;       // ayni saldirgandan iki vurus arasi en az (~22 CPS ustu reddedilir)
 const MAX_PER_SEC = 22;
@@ -79,6 +83,8 @@ function check(att, vic, ws, data, now, roomName) {
   if (!pvpRoom) return { ok: false, why: "room" };
   if (att.pst && (att.pst.spec || att.pst.hp <= 0)) return { ok: false, why: "att" };
   if (r.startsWith("m-") && att.team && vic.team && att.team === vic.team) return { ok: false, why: "team" };
+  // v239: hit-stun: hasar yiyen oyuncunun vurusu sayilmaz (karsilikli vurusma yok)
+  if (att.stunUntil && now < att.stunUntil - STUN_GRACE_MS) return { ok: false, why: "stun" };
   // saldirgan hiz siniri
   att.hitLog = (att.hitLog || []).filter((t) => now - t < 1000);
   if (att.hitLog.length && now - att.hitLog[att.hitLog.length - 1] < MIN_GAP_MS) return { ok: false, why: "rate" };
@@ -121,6 +127,11 @@ function check(att, vic, ws, data, now, roomName) {
   } else {
     vic.lastDmgAt = now; vic.lastDmgVal = want;
   }
+  // v239: hedef yeni hasar yedi -> kombo sayaci + hit-stun (COMBO_MAX'tan sonra stun yok)
+  if (!vic.comboAt || now - vic.comboAt > COMBO_RESET_MS) vic.combo = 0;
+  vic.comboAt = now;
+  vic.combo = (vic.combo || 0) + 1;
+  vic.stunUntil = vic.combo <= COMBO_MAX ? now + HITSTUN_MS : 0;
   return { ok: true, dm, dmg, dir, sdir: sdir || [0, 0] };
 }
 
