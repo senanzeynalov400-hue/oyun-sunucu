@@ -154,6 +154,20 @@ AUTH.setStatusProvider(() => ({ online: clients.size, players: [...clients.value
 function send(ws, obj) {
   if (ws.readyState === 1) ws.send(JSON.stringify(obj));
 }
+// SMP: ORTAK GUN SAATI. t = 0..1 (0 gun dogumu, 0.25 ogle, 0.5 aksam, 0.75 gece yarisi); 720 sn = 1 gun (istemcideki day_night.gd ile ayni).
+// Biri yatakta uyursa saat sabaha (0.03) alinir ve odadaki HERKESE yayilir.
+const SMP_DAY_SEC = 720;
+const SMP_MORNING_T = 0.03;
+let smpClock = { base: 0.12, at: Date.now() };
+function smpDayT() { return (((smpClock.base + (Date.now() - smpClock.at) / 1000 / SMP_DAY_SEC) % 1) + 1) % 1; }
+function smpBroadcastTime(by) {
+  const roomSet = rooms.get("smp");
+  if (!roomSet) return;
+  const t = smpDayT();
+  for (const w of roomSet) send(w, { type: "smp_time", t, by: by || "" });
+}
+setInterval(() => smpBroadcastTime(""), 60000).unref();      // saat kaymasin: dakikada bir herkesi esitle
+let smpLastSleep = 0;
 // Oyunda kac kisi var: BedWars odalari ("m-..."), Duels odalari ("d-...") + eslesme kuyrugunda bekleyenler.
 function statsNow() {
   let bedwars = queues.bedwars.length + queues.bedwars_siege.length + queues.bedwars_pirate.length + queues.bedwars_frost.length + queues.bedwars_citadel.length;
@@ -371,6 +385,7 @@ wss.on("connection", (ws) => {
         }
         joinRoom(ws, "smp");
         send(ws, { type: "lobby_joined", you: c.id, players: listOf("smp") });
+        send(ws, { type: "smp_time", t: smpDayT(), by: "" });       // ortak gun saati
         const myRoom = c.room;
         if (!msg.lazy) SMP.sendAll(ws, send, () => c.room === myRoom && ws.readyState === 1).catch((e) => console.error("SMP gonderilemedi", e.message));   // eski istemci: hepsini it; yeni istemci (lazy) smp_req ile yakin bolgeleri ister
         break;
@@ -410,6 +425,15 @@ wss.on("connection", (ws) => {
         if (!rec) break;
         const roomSet = rooms.get("smp");
         if (roomSet) for (const w of roomSet) if (w !== ws) send(w, { type: "smp_chest", x: sx, y: sy, z: sz, d: rec });
+        break;
+      }
+      case "smp_sleep": {                    // SMP: yatakta uyuyan oyuncu -> sabah olur (herkes icin)
+        if (c.room !== "smp" || !c.authed) break;
+        const tn = smpDayT();
+        if (Math.sin(tn * 2 * Math.PI) > -0.05) break;                // sadece gece uyunur
+        const nsl = Date.now(); if (nsl - smpLastSleep < 5000) break; smpLastSleep = nsl;
+        smpClock = { base: SMP_MORNING_T, at: nsl };
+        smpBroadcastTime(String(c.name || ""));
         break;
       }
       case "smp_save": {
