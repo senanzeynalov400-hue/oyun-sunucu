@@ -33,7 +33,7 @@ const COORD = 1048576;                      // |x|, |z| sinirlari
 const H = 128;
 const REGION_SHIFT = 9;                     // bolge = 512x512 blok (32x32 chunk)
 const SAVE_EVERY_MS = 15000;
-const CHUNK_SEND = 3000;                    // girerken mesaj basina blok sayisi
+const CHUNK_SEND = 1000;                    // girerken mesaj basina blok sayisi
 const RETRY_LOAD_MS = 30000;
 const PENDING_MAX = 200000;                 // yukleme bitmeden gelen degisiklikler
 const BACKUP_EVERY_MS = (Number(process.env.SMP_BACKUP_HOURS) || 6) * 3600 * 1000;
