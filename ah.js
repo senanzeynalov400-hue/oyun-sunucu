@@ -8,7 +8,7 @@ const AUTH = require("./auth");
 const ISL = require("./islands");
 const PRICES = require("./ah_prices.json");      // esya kimligi -> /sell Dinar fiyati (tools/gen_ah_prices.py)
 
-const MAX_ID = 275;                  // blocks.gd BLOCK_COUNT - 1 (v234: 274 idi -> Uc Kristali (275) /sell'de sessizce kayboluyordu)
+const MAX_ID = 278;   // v243: 276 makas, 277 kova, 278 su kovasi                  // blocks.gd BLOCK_COUNT - 1 (v234: 274 idi -> Uc Kristali (275) /sell'de sessizce kayboluyordu)
 const MAX_STACK = 64;
 const MAX_PRICE = 1000000000;
 const MAX_LISTINGS = 25;             // oyuncu basina
