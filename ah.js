@@ -7,6 +7,7 @@ const path = require("path");
 const AUTH = require("./auth");
 const ISL = require("./islands");
 const PRICES = require("./ah_prices.json");      // esya kimligi -> /sell Dinar fiyati (tools/gen_ah_prices.py)
+const SHOP = require("./shop_items.json");       // /shop katalogu: {cats:[{key,name,items:[{id,n,price}]}]} (fiyat SADECE burada gecerli)
 
 const MAX_ID = 278;   // v243: 276 makas, 277 kova, 278 su kovasi                  // blocks.gd BLOCK_COUNT - 1 (v234: 274 idi -> Uc Kristali (275) /sell'de sessizce kayboluyordu)
 const MAX_STACK = 64;
@@ -148,6 +149,16 @@ async function handleHttp(req, res) {
           const ids = new Set((Array.isArray(body.ids) ? body.ids : []).map(Number));
           if (state.inbox[me]) { state.inbox[me] = state.inbox[me].filter((e) => !ids.has(e.id)); if (!state.inbox[me].length) delete state.inbox[me]; touch(); }
           return { ok: true };
+        }
+        case "/ah/shop": {                       // {cat, i} -> /shop: sunucu katalog fiyatini dusurur, esya posta kutusuna (istemci /ah/inbox ile alir)
+          const cat = SHOP.cats.find((c) => c.key === String(body.cat || ""));
+          const e = cat && cat.items[Math.floor(Number(body.i))];
+          if (!e || !okItem(e.id, e.n)) return { ok: false, error: "Ürün bulunamadı" };
+          const t = await ISL.walletTransfer(me, me, e.price);       // ayni anahtar: sadece dus (yetmezse ok:false)
+          if (!t.ok) return { ok: false, error: "Yetersiz Dinar", dinar: t.dinar || 0 };
+          post(me, { kind: "item", item: e.id, n: e.n, text: "Mağazadan satın alındı." });
+          touch();
+          return { ok: true, dinar: t.dinar };
         }
         case "/ah/sell": {                       // {items:[[id,n],...]} -> sunucu fiyatiyla hesaplar, Dinar'i hesaba yazar
           const list = Array.isArray(body.items) ? body.items.slice(0, 60) : [];
