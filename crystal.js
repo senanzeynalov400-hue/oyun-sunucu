@@ -7,7 +7,7 @@ const HALF = 200;
 const BEDROCK_Y = 30;
 const GROUND_Y = 60;
 const MAX_Y = 127;
-const SAFE_R = 12;                   // v224: ortadaki kirmizi guvenli bolge (istemci crystal_map.gd SAFE_R ile ayni): blok / kristal degisikligi kabul edilmez
+const SAFE_R = 5;                    // v224: ortadaki kirmizi guvenli bolge (istemci crystal_map.gd SAFE_R ile ayni): blok / kristal degisikligi kabul edilmez
 const inSafe = (x, z) => Math.abs(x) <= SAFE_R && Math.abs(z) <= SAFE_R;
 const AIR = 0, SAND = 4, BEDROCK = 12, OBSIDIAN = 50;
 const RESET_MS = (Number(process.env.CRYSTAL_RESET_MIN) || 10) * 60 * 1000;
