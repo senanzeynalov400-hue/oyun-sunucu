@@ -7,7 +7,7 @@ const fs = require("fs");
 const path = require("path");
 
 const CHEST_ID = 49;              // blocks.gd enum sirasi: B.CHEST
-const MAX_ITEM_ID = 278;   // v243: 276 makas, 277 kova, 278 su kovasi          // blocks.gd BLOCK_COUNT - 1
+const MAX_ITEM_ID = 511;   // v247 FIX: eskiden 278'di -> 279+ (ornegin 292 ejderha yumurtasi) sandiga konunca SUNUCUDA siliniyordu. blocks.gd BLOCK_COUNT (293) buyuse de yetsin
 const MAX_STACK = 64;
 const MAX_CHESTS = 200000;
 const COORD = 1048576;

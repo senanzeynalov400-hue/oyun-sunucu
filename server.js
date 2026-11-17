@@ -7,6 +7,7 @@ const AUTH = require("./auth");
 const KUFUR = require("./kufur");
 const SOCIAL = require("./social");
 const CRY = require("./crystal");            // Crystal Arena: sunucuda tutulan 400x400 kum haritasi, 10 dk'da bir sifirlanir
+const SMPF = require("./smp_furnaces");     // v247: SMP ocak icerigi (sunucuda kalici)
 const SMPC = require("./smp_chests");      // v234: SMP sandik icerigi (sunucuda kalici)
 const SMP = require("./smp");              // SMP: herkesin ortak, kalici survival dunyasi (sadece degisen bloklar saklanir)
 const AH = require("./ah");                  // SMP: /ah (oyuncu pazari) + /sell (Dinar)
@@ -428,6 +429,27 @@ wss.on("connection", (ws) => {
         if (roomSet) for (const w of roomSet) if (w !== ws) send(w, { type: "smp_chest", x: sx, y: sy, z: sz, d: rec });
         break;
       }
+      case "smp_furnace_get": {              // v247: SMP ocak icerigi
+        if (c.room !== "smp") break;
+        { const ng = Date.now(); if (!c.fg || ng - c.fg.t >= 10000) c.fg = { t: ng, n: 0 }; if (++c.fg.n > 300) break; }
+        const fx = Number(msg.x), fy = Number(msg.y), fz = Number(msg.z);
+        if (![fx, fy, fz].every(Number.isInteger)) break;
+        send(ws, { type: "smp_furnace", x: fx, y: fy, z: fz, d: SMPF.get(fx, fy, fz) });
+        break;
+      }
+      case "smp_furnace_set": {              // v247: ocak kapatilinca tam icerik gelir; sunucu dogrular, saklar, odadakilere yayar
+        if (c.room !== "smp" || !c.authed) break;
+        { const ns = Date.now(); if (!c.fs || ns - c.fs.t >= 10000) c.fs = { t: ns, n: 0 }; if (++c.fs.n > 30) break; }
+        const ux = Number(msg.x), uy = Number(msg.y), uz = Number(msg.z);
+        if (![ux, uy, uz].every(Number.isInteger)) break;
+        const psf = c.pst;
+        if (psf && Array.isArray(psf.p) && Date.now() - psf.t < 5000 && Math.hypot(ux - psf.p[0], uy - psf.p[1], uz - psf.p[2]) > SMP_BLOCK_REACH) break;
+        const frec = SMPF.set(ux, uy, uz, { i: msg.i, c: msg.c, b: msg.b, bm: msg.bm, k: msg.k });
+        if (!frec) break;
+        const froom = rooms.get("smp");
+        if (froom) for (const w of froom) if (w !== ws) send(w, { type: "smp_furnace", x: ux, y: uy, z: uz, d: frec });
+        break;
+      }
       case "smp_sleep": {                    // SMP: yatakta uyuyan oyuncu -> sabah olur (herkes icin)
         if (c.room !== "smp" || !c.authed) break;
         const tn = smpDayT();
@@ -607,6 +629,7 @@ wss.on("connection", (ws) => {
           const ps = c.pst;
           if (ps && Array.isArray(ps.p) && nowB - ps.t < 5000 && Math.hypot(Number(msg.data.x) - ps.p[0], Number(msg.data.y) - ps.p[1], Number(msg.data.z) - ps.p[2]) > SMP_BLOCK_REACH) break;   // cok uzaktan blok (patlamalar icin genis)
           if (!SMP.setBlock(msg.data.x, msg.data.y, msg.data.z, msg.data.id)) break;  // gecersiz kimlik / koordinat / blok siniri dolu
+          if (Number(msg.data.id) !== SMPF.FURNACE_ID) SMPF.remove(Number(msg.data.x), Number(msg.data.y), Number(msg.data.z));      // v247: ocak kirildi: icerik kaydi silinir
           if (Number(msg.data.id) !== SMPC.CHEST_ID) SMPC.remove(Number(msg.data.x), Number(msg.data.y), Number(msg.data.z));      // v234: sandik kirildi / yerine baska blok geldi: icerik kaydi silinir
         }
         // SMP: tpa_* ve smp_kill paketleri sunucuda yeniden yazilir: gonderen adi sunucudan (sahte "from"/"victim" olamaz), koordinatlar dogrulanir
@@ -631,7 +654,7 @@ wss.on("connection", (ws) => {
           const dd = msg.data;
           const okv = (a, lim) => Array.isArray(a) && a.length === 3 && a.every((v) => typeof v === "number" && Number.isFinite(v) && Math.abs(v) < lim);
           const did = Number(dd.id), dn = Number(dd.n), du = Number(dd.u);
-          if (!Number.isInteger(did) || did < 1 || did > 255 || !Number.isInteger(dn) || dn < 1 || dn > 64 || !Number.isInteger(du) || du < 0 || du > 2e9 || !okv(dd.p, 1000000) || !okv(dd.v, 12)) break;
+          if (!Number.isInteger(did) || did < 1 || did > 511 || !Number.isInteger(dn) || dn < 1 || dn > 64 || !Number.isInteger(du) || du < 0 || du > 2e9 || !okv(dd.p, 1000000) || !okv(dd.v, 12)) break;
           msg.data = { kind: "smp_drop", u: du, id: did, n: dn, p: dd.p, v: dd.v };
         } else if (c.room === "smp" && msg.data.kind === "smp_take") {
           const nt = Date.now(); if (!c.tk || nt - c.tk.t >= 10000) c.tk = { t: nt, n: 0 }; if (++c.tk.n > 300) break;
@@ -692,5 +715,5 @@ server.listen(PORT, () => console.log("MoMinecraft sunucu hazir, port " + PORT))
 
 // Render yeniden baslatirken (SIGTERM) SMP blok degisikliklerini yaz
 for (const sig of ["SIGTERM", "SIGINT"]) {
-  process.on(sig, () => { Promise.all([SMP.flush(), AH.flush(), SMPC.flush()]).finally(() => process.exit(0)); setTimeout(() => process.exit(0), 8000).unref(); });
+  process.on(sig, () => { Promise.all([SMP.flush(), AH.flush(), SMPC.flush(), SMPF.flush()]).finally(() => process.exit(0)); setTimeout(() => process.exit(0), 8000).unref(); });
 }
