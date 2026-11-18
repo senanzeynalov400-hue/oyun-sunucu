@@ -9,7 +9,7 @@ const ISL = require("./islands");
 const PRICES = require("./ah_prices.json");      // esya kimligi -> /sell Dinar fiyati (tools/gen_ah_prices.py)
 const SHOP = require("./shop_items.json");       // /shop katalogu: {cats:[{key,name,items:[{id,n,price}]}]} (fiyat SADECE burada gecerli)
 
-const MAX_ID = 278;   // v243: 276 makas, 277 kova, 278 su kovasi                  // blocks.gd BLOCK_COUNT - 1 (v234: 274 idi -> Uc Kristali (275) /sell'de sessizce kayboluyordu)
+const MAX_ID = 295;   // v243: 276 makas, 277 kova, 278 su kovasi; v234: 295 = akasya update (sise/tuy 293-295)                  // blocks.gd BLOCK_COUNT - 1 (v234: 274 idi -> Uc Kristali (275) /sell'de sessizce kayboluyordu)
 const MAX_STACK = 64;
 const MAX_PRICE = 1000000000;
 const MAX_LISTINGS = 25;             // oyuncu basina

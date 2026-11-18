@@ -26,6 +26,7 @@ const WEAPON_DMG = {
   36: 5.0, 93: 7.0, 95: 9.0, 150: 10.0, 33: 4.0, 32: 3.0, 34: 3.0, 35: 2.5,
   126: 6.0, 125: 5.0, 128: 4.5, 127: 3.5, 132: 7.0, 131: 6.0, 134: 5.5, 133: 4.0,
   136: 5.0, 135: 4.0, 138: 3.5, 137: 3.0, 92: 6.0, 129: 2.5,
+  290: 6.5, 291: 10.0,   // v245: altin / netherite kilic
 };
 // v223: 1.9 PVP: baltalar kilictan cok vurur (blocks.gd attack_damage ile ayni): tahta 7, tas 9, demir 9, elmas 9
 WEAPON_DMG[33] = 7.0; WEAPON_DMG[136] = 9.0; WEAPON_DMG[126] = 9.0; WEAPON_DMG[132] = 9.0;
@@ -34,6 +35,7 @@ const WEAPON_SPEED = {
   36: 1.6, 92: 1.6, 93: 1.6, 95: 1.0, 150: 1.0, 33: 0.8, 136: 0.8, 126: 0.9, 132: 1.0,
   32: 1.2, 135: 1.2, 125: 1.2, 131: 1.2, 34: 1.0, 138: 1.0, 128: 1.0, 134: 1.0,
   35: 1.0, 137: 2.0, 127: 3.0, 133: 4.0,
+  290: 1.6, 291: 1.0,   // v245: altin / netherite kilic
 };
 const SPEED_FIST = 4.0;
 function speedOf(id) { return WEAPON_SPEED[id] !== undefined ? WEAPON_SPEED[id] : SPEED_FIST; }
