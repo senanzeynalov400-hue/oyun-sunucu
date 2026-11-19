@@ -7,7 +7,7 @@ const fs = require("fs");
 const path = require("path");
 
 const CHEST_ID = 49;              // blocks.gd enum sirasi: B.CHEST
-const MAX_ITEM_ID = 511;   // v247 FIX: eskiden 278'di -> 279+ (ornegin 292 ejderha yumurtasi) sandiga konunca SUNUCUDA siliniyordu. blocks.gd BLOCK_COUNT (293) buyuse de yetsin
+const MAX_ITEM_ID = 511;   // v247 FIX: eskiden 278'di -> 279+ sandiga konunca SUNUCUDA siliniyordu. BLOCK_COUNT (su an 296) buyuse de esya silinmesin diye BILEREK genis tutulur: dusurme!
 const MAX_STACK = 64;
 const MAX_CHESTS = 200000;
 const COORD = 1048576;
@@ -68,6 +68,25 @@ function set(x, y, z, d) {
   map.set(k, rec); dirty = true;
   return rec;
 }
-function remove(x, y, z) { if (map.delete(key(x, y, z))) dirty = true; }
+function remove(x, y, z) { locks.delete(key(x, y, z)); if (map.delete(key(x, y, z))) dirty = true; }
+
+// v250: SANDIK KILIDI. Ayni sandigi iki oyuncu ayni anda acarsa biri digerinin degisikligini eziyor / esya cogaliyor-kayboluyordu.
+// Sandigi ACAN oyuncu kilit alir; baskasi acamaz. Kapaninca (cl) / baglanti kopunca / 3 dk sonra kilit kalkar.
+const LOCK_MS = 180000;
+const locks = new Map();   // "x,y,z" -> { ws, t }
+function lockHeldByOther(x, y, z, ws) {
+  const l = locks.get(key(x, y, z));
+  if (!l) return false;
+  if (l.ws === ws) return false;
+  if (l.ws.readyState !== 1 || Date.now() - l.t > LOCK_MS) { locks.delete(key(x, y, z)); return false; }
+  return true;
+}
+function tryLock(x, y, z, ws) {
+  if (!okPos(x, y, z) || lockHeldByOther(x, y, z, ws)) return false;
+  locks.set(key(x, y, z), { ws, t: Date.now() });
+  return true;
+}
+function unlock(x, y, z, ws) { const l = locks.get(key(x, y, z)); if (l && l.ws === ws) locks.delete(key(x, y, z)); }
+function unlockAll(ws) { for (const [k, l] of locks) if (l.ws === ws) locks.delete(k); }
 async function flush() { await loaded; dirty = true; await save(); }
-module.exports = { CHEST_ID, get, set, remove, flush, loaded };
+module.exports = { CHEST_ID, get, set, remove, flush, loaded, okPos, lockHeldByOther, tryLock, unlock, unlockAll };

@@ -8,6 +8,7 @@ const KUFUR = require("./kufur");
 const SOCIAL = require("./social");
 const CRY = require("./crystal");            // Crystal Arena: sunucuda tutulan 400x400 kum haritasi, 10 dk'da bir sifirlanir
 const SMPF = require("./smp_furnaces");     // v247: SMP ocak icerigi (sunucuda kalici)
+const SMPD = require("./smp_depo");          // v251: /depo (oyuncu basina 54 slot, kalici)
 const SMPC = require("./smp_chests");      // v234: SMP sandik icerigi (sunucuda kalici)
 const SMP = require("./smp");              // SMP: herkesin ortak, kalici survival dunyasi (sadece degisen bloklar saklanir)
 const AH = require("./ah");                  // SMP: /ah (oyuncu pazari) + /sell (Dinar)
@@ -408,25 +409,65 @@ wss.on("connection", (ws) => {
         catch (e) { console.error("SMP oyuncu verisi okunamadi", e.message); }      // cevap yok: istemci zaman asimiyla yerel devam eder, yukleme yapmaz
         break;
       }
-      case "smp_chest_get": {                // v234: SMP sandik icerigi + yonu
+      case "smp_chest_get": {                // v234: SMP sandik icerigi + yonu. v250: open=true -> kilit alinir (baskasi aciksa busy)
         if (c.room !== "smp") break;
-        { const ng = Date.now(); if (!c.cg || ng - c.cg.t >= 10000) c.cg = { t: ng, n: 0 }; if (++c.cg.n > 300) break; }
+        { const ng = Date.now(); if (!c.cg || ng - c.cg.t >= 10000) c.cg = { t: ng, n: 0 }; if (++c.cg.n > 600) break; }
         const cx = Number(msg.x), cy = Number(msg.y), cz = Number(msg.z);
         if (![cx, cy, cz].every(Number.isInteger)) break;
+        if (msg.open) {
+          if (!c.authed || !SMPC.tryLock(cx, cy, cz, ws)) { send(ws, { type: "smp_chest", x: cx, y: cy, z: cz, d: SMPC.get(cx, cy, cz), busy: 1 }); break; }
+          send(ws, { type: "smp_chest", x: cx, y: cy, z: cz, d: SMPC.get(cx, cy, cz), lock: 1 });
+          break;
+        }
         send(ws, { type: "smp_chest", x: cx, y: cy, z: cz, d: SMPC.get(cx, cy, cz) });
         break;
       }
       case "smp_chest_set": {                // v234: sandik kapatilinca / koyulunca tam icerik gelir; sunucu dogrular, saklar, odadakilere yayar
+        // v250: ESYA KAYBI DUZELTMESI. Eskiden reddedilen / hiz sinirina takilan paket SESSIZCE dusuyordu: oyuncu esyayi koyup kapatiyor, sunucu
+        // kaydetmiyor, sonraki acista sunucudaki ESKI icerik telefondakinin ustune yaziliyordu = esyalar yok. Simdi her paket cevaplanir:
+        // ack (kaydedildi) / nack 1 (gecici: tekrar dene) / nack 2 (kalici red). Istemci onay gelene kadar paketi tekrar yollar.
         if (c.room !== "smp" || !c.authed) break;
-        { const ns = Date.now(); if (!c.cs || ns - c.cs.t >= 10000) c.cs = { t: ns, n: 0 }; if (++c.cs.n > 30) break; }
         const sx = Number(msg.x), sy = Number(msg.y), sz = Number(msg.z);
         if (![sx, sy, sz].every(Number.isInteger)) break;
+        const nackC = (code) => send(ws, { type: "smp_chest", x: sx, y: sy, z: sz, d: SMPC.get(sx, sy, sz), nack: code });
+        { const ns = Date.now(); if (!c.cs || ns - c.cs.t >= 10000) c.cs = { t: ns, n: 0 }; if (++c.cs.n > 120) { nackC(1); break; } }
         const psc = c.pst;
-        if (psc && Array.isArray(psc.p) && Date.now() - psc.t < 5000 && Math.hypot(sx - psc.p[0], sy - psc.p[1], sz - psc.p[2]) > SMP_BLOCK_REACH) break;
+        if (psc && Array.isArray(psc.p) && Date.now() - psc.t < 5000 && Math.hypot(sx - psc.p[0], sy - psc.p[1], sz - psc.p[2]) > SMP_BLOCK_REACH) { nackC(1); break; }
+        const knownB = SMP.getBlock(sx, sy, sz);       // -1 = dogal arazi (koy sandigi); baska bir blok kayitliysa orada sandik YOK
+        if (knownB !== -1 && knownB !== SMPC.CHEST_ID) { nackC(2); break; }
+        if (SMPC.lockHeldByOther(sx, sy, sz, ws)) { nackC(1); break; }
         const rec = SMPC.set(sx, sy, sz, { i: msg.i, c: msg.c, t: msg.t });
-        if (!rec) break;
+        if (!rec) { nackC(2); break; }
+        if (msg.cl) SMPC.unlock(sx, sy, sz, ws);
+        send(ws, { type: "smp_chest", x: sx, y: sy, z: sz, d: rec, ack: 1 });
         const roomSet = rooms.get("smp");
         if (roomSet) for (const w of roomSet) if (w !== ws) send(w, { type: "smp_chest", x: sx, y: sy, z: sz, d: rec });
+        break;
+      }
+      case "smp_depo_get": {                 // v251: /depo icerigi. open=true -> kilit alinir (ayni hesap baska cihazda aciksa busy)
+        if (c.room !== "smp" || !c.authed) break;
+        { const ng = Date.now(); if (!c.dg || ng - c.dg.t >= 10000) c.dg = { t: ng, n: 0 }; if (++c.dg.n > 60) break; }
+        const dk = SMPD.keyOf(c.name);
+        if (!dk) break;
+        if (msg.open) {
+          if (!SMPD.tryLock(dk, ws)) { send(ws, { type: "smp_depo", d: SMPD.get(dk), busy: 1 }); break; }
+          send(ws, { type: "smp_depo", d: SMPD.get(dk), lock: 1 });
+          break;
+        }
+        send(ws, { type: "smp_depo", d: SMPD.get(dk) });
+        break;
+      }
+      case "smp_depo_set": {                 // v251: depo kaydi. Her paket cevaplanir: ack (kaydedildi) / nack 1 (gecici, tekrar dene) / nack 2 (kalici red)
+        if (c.room !== "smp" || !c.authed) break;
+        const sk = SMPD.keyOf(c.name);
+        if (!sk) break;
+        const nackDp = (code) => send(ws, { type: "smp_depo", d: SMPD.get(sk), nack: code });
+        { const ns = Date.now(); if (!c.ds || ns - c.ds.t >= 10000) c.ds = { t: ns, n: 0 }; if (++c.ds.n > 120) { nackDp(1); break; } }
+        if (SMPD.lockHeldByOther(sk, ws)) { nackDp(1); break; }
+        const drec = SMPD.set(sk, { i: msg.i, c: msg.c });
+        if (!drec) { nackDp(2); break; }
+        if (msg.cl) SMPD.unlock(sk, ws);
+        send(ws, { type: "smp_depo", d: drec, ack: 1 });
         break;
       }
       case "smp_furnace_get": {              // v247: SMP ocak icerigi
@@ -689,6 +730,8 @@ wss.on("connection", (ws) => {
     c.chain = c.chain.then(() => onMsg(raw)).catch(() => {});
   });
   ws.on("close", () => {
+    SMPC.unlockAll(ws);
+    SMPD.unlockAll(ws);
     vLeave(ws);
     dequeue(ws);
     leaveRoom(ws);
@@ -715,5 +758,5 @@ server.listen(PORT, () => console.log("MoMinecraft sunucu hazir, port " + PORT))
 
 // Render yeniden baslatirken (SIGTERM) SMP blok degisikliklerini yaz
 for (const sig of ["SIGTERM", "SIGINT"]) {
-  process.on(sig, () => { Promise.all([SMP.flush(), AH.flush(), SMPC.flush(), SMPF.flush()]).finally(() => process.exit(0)); setTimeout(() => process.exit(0), 8000).unref(); });
+  process.on(sig, () => { Promise.all([SMP.flush(), AH.flush(), SMPC.flush(), SMPD.flush(), SMPF.flush()]).finally(() => process.exit(0)); setTimeout(() => process.exit(0), 8000).unref(); });
 }
