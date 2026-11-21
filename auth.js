@@ -957,6 +957,43 @@ async function discordFile(buf, filename, text) {
 }
 
 // ---- SOHBETE MESAJ (admin > Sohbet): oyundaki lobi / arena / mac sohbetine sunucudan mesaj yazar (server.js baglar)
+let smpAdmin = null;
+function setSmpAdmin(o) { smpAdmin = o; }
+// ---- ADMIN > SMP: seed / harita 0'la / envanter 0'la (islemleri server.js yapar)
+async function adminSmp(body) {
+  if (!smpAdmin) return { status: 503, error: "SMP modulu hazir degil" };
+  const act = String(body.act || "info");
+  try {
+    if (act === "info") return { status: 200, ok: true, ...(await smpAdmin.info()) };
+    if (act === "inv") {
+      const name = lowName(body.name);
+      if (!name && body.confirm !== "SMP") return { status: 400, error: "Herkesin envanteri icin onay (SMP) gerekli" };
+      const r = await smpAdmin.inv(name, body.depo === true);
+      if (name && !r.players && !r.notified) return { status: 404, error: "Bu oyuncunun SMP kaydi yok" };
+      console.log("ADMIN SMP envanter sifirladi: " + (name || "HERKES") + " (" + r.players + " kayit, depo " + r.depo + ")");
+      return { status: 200, ok: true, ...r };
+    }
+    if (act === "seed") {
+      if (body.confirm !== "SMP") return { status: 400, error: "Onay (SMP) gerekli" };
+      const n = Number(body.seed);
+      if (!Number.isInteger(n) || n < 1 || n > 2000000000) return { status: 400, error: "Seed 1 ile 2000000000 arasi tam sayi olmali" };
+      const r = await smpAdmin.seedSet(n, body.wipe === true);
+      console.log("ADMIN SMP seed degistirdi: " + r.old + " -> " + n + (body.wipe === true ? " (harita sifirlandi)" : ""));
+      return { status: 200, ok: true, ...r };
+    }
+    if (act === "map") {
+      if (body.confirm !== "SMP") return { status: 400, error: "Onay (SMP) gerekli" };
+      const r = await smpAdmin.mapReset();
+      console.log("ADMIN SMP haritasini sifirladi (" + r.blocks + " blok, yedek " + r.backup + ")");
+      return { status: 200, ok: true, ...r };
+    }
+    return { status: 400, error: "Bilinmeyen islem" };
+  } catch (e) {
+    console.error("ADMIN SMP hatasi", e);
+    return { status: 500, error: "SMP islemi basarisiz: " + e.message };
+  }
+}
+
 let adminSay = null;
 function setAdminSay(fn) { adminSay = fn; }
 let statusProvider = null;
@@ -1187,7 +1224,7 @@ p.h{color:#9fb0cf;font-size:14px;margin:0 0 4px}
 </style></head><body>
 <h1>Admin paneli</h1>
 <input id="key" type="password" placeholder="Admin anahtari" autocomplete="off">
-<div class="tabs"><button id="tb1" class="on" onclick="tab(1)">Oyuncular</button><button id="tb2" onclick="tab(2)">Herkese</button><button id="tb3" onclick="tab(3)">Yedek</button><button id="tb4" onclick="tab(4)">Sohbet</button><button id="tb5" onclick="tab(5)">Fiyatlar</button><button id="tb6" onclick="tab(6)">Sunucu</button><button id="tb7" onclick="tab(7)">Guncelle</button></div>
+<div class="tabs"><button id="tb1" class="on" onclick="tab(1)">Oyuncular</button><button id="tb2" onclick="tab(2)">Herkese</button><button id="tb3" onclick="tab(3)">Yedek</button><button id="tb4" onclick="tab(4)">Sohbet</button><button id="tb5" onclick="tab(5)">Fiyatlar</button><button id="tb6" onclick="tab(6)">Sunucu</button><button id="tb7" onclick="tab(7)">Guncelle</button><button id="tb8" onclick="tab(8)">SMP</button></div>
 
 <div id="t1">
 <div class="row"><input id="q" placeholder="Oyuncu ara (isim)" onkeydown="if(event.key==='Enter')load()"><select id="sort" onchange="load()"><option value="name">A-Z</option><option value="coins">En cok altin</option><option value="gems">En cok elmas</option><option value="points">En cok puan</option></select></div>
@@ -1298,6 +1335,25 @@ p.h{color:#9fb0cf;font-size:14px;margin:0 0 4px}
 <button class="ok" onclick="auSave()">Kaydet</button>
 <p class="h">Yeni surumu yaparken script/auth.gd icindeki BUILD sayisini 1 artir, burdaki gerekli surumu de o sayi yap. Eski surumu olanlar guncellemek zorunda kalir.</p>
 </div>
+<div id="t8" style="display:none">
+ <h2>SMP dunyasi</h2>
+ <p class="h" id="sm_info">Yukleniyor...</p>
+ <button class="alt" onclick="smpLoad()">Yenile</button>
+ <h2>Envanter 0la</h2>
+ <p class="h">Oyuncu ismi yazarsan sadece o, bos birakirsan SMP deki HERKES. Online olanlarin envanteri aninda bosalir.</p>
+ <input id="sm_name" placeholder="Oyuncu ismi (bos = herkes)">
+ <div class="chk"><input id="sm_depo" type="checkbox"><label for="sm_depo">/depo icerigi de silinsin</label></div>
+ <button class="bad" onclick="smpInv()">Envanteri 0la</button>
+ <h2>Harita seed</h2>
+ <p class="h">Su anki seed: <b id="sm_seed">-</b></p>
+ <input id="sm_newseed" type="number" min="1" max="2000000000" placeholder="Yeni seed (1 - 2000000000)">
+ <div class="chk"><input id="sm_wipe" type="checkbox" checked><label for="sm_wipe">Haritayi da sifirla (onerilir: eski yapilar yeni arazide havada kalir)</label></div>
+ <div class="row"><button class="alt" onclick="smpRand()">Rastgele sec</button><button class="warn" onclick="smpSeed()">Seed i degistir</button></div>
+ <p class="h">Online oyuncular Hub a atilir, tekrar girince yeni seed e gecerler. Seed i degistirince herkesin ev / son konumu da silinir.</p>
+ <h2>Haritayi 0la</h2>
+ <p class="h">Oyuncularin koydugu / kirdigi tum bloklar, sandiklar ve ocaklar silinir (seed ayni kalir). Once otomatik yedek alinir. Online oyuncular Hub a atilir.</p>
+ <button class="bad" onclick="smpMap()">Haritayi 0la</button>
+</div>
 <div id="toast"></div>
 <script>
 const $=id=>document.getElementById(id);
@@ -1306,7 +1362,7 @@ $('key').value=sessionStorage.getItem('ak')||'';
 $('key').addEventListener('input',()=>sessionStorage.setItem('ak',$('key').value));
 function msg(t){const x=$('toast');x.textContent=t;x.style.display='block';clearTimeout(tt);tt=setTimeout(()=>{x.style.display='none'},4500)}
 async function api(path,body){try{const r=await fetch('/admin/'+path,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(Object.assign({key:$('key').value},body||{}))});let j;try{j=await r.json()}catch(e){j={error:'Cevap okunamadi'}}j._status=r.status;return j}catch(e){return {ok:false,error:'Baglanti hatasi: '+e}}}
-function tab(n){if(n===7)auLoad();for(let i=1;i<=7;i++){$('t'+i).style.display=i===n?'block':'none';$('tb'+i).className=i===n?'on':''}
+function tab(n){if(n===7)auLoad();if(n===8)smpLoad();for(let i=1;i<=8;i++){$('t'+i).style.display=i===n?'block':'none';$('tb'+i).className=i===n?'on':''}
 if(n===5&&!PR.length)loadPrices();if(n===6)stat();else stopAuto()}
 let PR=[],SR=[],auto=null;
 function onTarget(){$('s_to').style.display=$('s_target').value==='player'?'block':'none'}
@@ -1401,6 +1457,11 @@ msg('Tamam: '+j.added+' yeni, '+j.updated+' guncellendi, '+j.skipped+' atlandi'+
 async function dcnow(){msg('Gonderiliyor...');const j=await api('backup_now',{});msg(j.ok?('Discord kanalina gonderildi ('+j.players+' oyuncu)'):(j.error||('Hata '+j._status)))}
 async function dl(f){try{const r=await fetch('/admin/export',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({key:$('key').value,format:f})});if(!r.ok){msg('Hata '+r.status+' '+await r.text());return}const cd=r.headers.get('Content-Disposition')||'';const m=/filename="([^"]+)"/.exec(cd);const bl=await r.blob();const a=document.createElement('a');a.href=URL.createObjectURL(bl);a.download=m?m[1]:'yedek.'+f;document.body.appendChild(a);a.click();a.remove();msg('Indirildi: '+a.download)}catch(x){msg('Hata: '+x)}}
 let AUIMG=null;
+async function smpLoad(){const j=await api('smp',{act:'info'});if(!j.ok){msg(j.error||('Hata '+j._status));return}$('sm_seed').textContent=j.seed;$('sm_info').textContent='Durum: '+j.state+' | '+j.blocks+' degisen blok, '+j.regions+' bolge | online: '+j.online+' | sandik: '+j.chests+' | ocak: '+j.furnaces+' | son yedek: '+(j.lastBackupAt?new Date(j.lastBackupAt).toLocaleString():'yok')}
+async function smpInv(){const n=$('sm_name').value.trim();if(!n){if(prompt('SMP deki HERKESIN envanteri silinecek. Devam icin SMP yaz')!=='SMP')return}else if(!confirm(n+' oyuncusunun SMP envanteri silinsin mi?'))return;const j=await api('smp',{act:'inv',name:n,depo:$('sm_depo').checked,confirm:n?'':'SMP'});if(j.ok){msg(j.players+' oyuncunun envanteri sifirlandi, '+j.notified+' kisiye anlik bildirildi'+(j.depo?', depo: '+j.depo:''));smpLoad()}else msg(j.error||('Hata '+j._status))}
+function smpRand(){$('sm_newseed').value=1+Math.floor(Math.random()*999999)}
+async function smpSeed(){const s=parseInt($('sm_newseed').value,10);if(!(s>=1&&s<=2000000000)){msg('Seed 1 ile 2000000000 arasi bir sayi olmali');return}const w=$('sm_wipe').checked;if(prompt('Seed '+s+' olacak'+(w?' ve harita SILINECEK (yedek alinir)':'')+'. Online oyuncular Hub a atilir. Devam icin SMP yaz')!=='SMP')return;const j=await api('smp',{act:'seed',seed:s,wipe:w,confirm:'SMP'});if(j.ok){msg('Seed '+j.old+' > '+j.seed+(w?' | silinen blok: '+j.blocks+', sandik: '+j.chests+', ocak: '+j.furnaces:'')+' | atilan oyuncu: '+j.kicked);smpLoad()}else msg(j.error||('Hata '+j._status))}
+async function smpMap(){if(prompt('SMP haritasi TAMAMEN silinecek (yedek alinir). Online oyuncular Hub a atilir. Devam icin SMP yaz')!=='SMP')return;const j=await api('smp',{act:'map',confirm:'SMP'});if(j.ok){msg('Harita sifirlandi: '+j.blocks+' blok, '+j.chests+' sandik, '+j.furnaces+' ocak silindi | yedek: '+(j.backup||'yok'));smpLoad()}else msg(j.error||('Hata '+j._status))}
 async function auLoad(){const j=await api('appupdate',{});if(!j.ok){msg(j.error||('Hata '+j._status));return}
 $('aubuild').value=j.build||0;$('aulink').value=j.link||'';AUIMG=null;
 $('aupv').innerHTML=j.image?'<img src="data:image/jpeg;base64,'+j.image+'" style="max-width:100%;border-radius:10px;margin:6px 0">':'<p class="h">Gorsel yok</p>'}
@@ -1477,7 +1538,7 @@ async function handleHttp(req, res) {
     res.end(ADMIN_PAGE);
     return true;
   }
-  if (req.method !== "POST" || !["/register", "/login", "/me", "/logout", "/profile", "/buy_hat", "/daily_claim", "/top", "/look", "/bw_points", "/rank_set", "/mute", "/unmute", "/ban", "/unban", "/admin/give", "/admin/give_all", "/admin/export", "/admin/players", "/admin/player", "/admin/update", "/admin/punish", "/admin/setpass", "/admin/delete", "/admin/balance", "/admin/op", "/admin/import", "/admin/backup_now", "/admin/say", "/admin/prices", "/admin/prices_set", "/admin/prices_reset", "/admin/status", "/admin/resources", "/app_update", "/admin/appupdate", "/admin/appupdate_set"].includes(url)) return false;
+  if (req.method !== "POST" || !["/register", "/login", "/me", "/logout", "/profile", "/buy_hat", "/daily_claim", "/top", "/look", "/bw_points", "/rank_set", "/mute", "/unmute", "/ban", "/unban", "/admin/give", "/admin/give_all", "/admin/export", "/admin/players", "/admin/player", "/admin/update", "/admin/punish", "/admin/setpass", "/admin/delete", "/admin/balance", "/admin/op", "/admin/import", "/admin/backup_now", "/admin/say", "/admin/prices", "/admin/prices_set", "/admin/prices_reset", "/admin/status", "/admin/resources", "/app_update", "/admin/appupdate", "/admin/appupdate_set", "/admin/smp", "/smp_info"].includes(url)) return false;
   const out = (code, obj) => { res.writeHead(code, { "Content-Type": "application/json" }); res.end(JSON.stringify(obj)); };
   try {
     const ip = String(req.headers["x-forwarded-for"] || req.socket.remoteAddress || "").split(",")[0].trim();
@@ -1499,6 +1560,7 @@ async function handleHttp(req, res) {
     if (url === "/ban") return send(await banSet(body));
     if (url === "/unban") return send(await unbanSet(body));
     if (url === "/app_update") return send(await appUpdatePublic(body));
+    if (url === "/smp_info") return send({ status: 200, ok: true, seed: smpAdmin ? smpAdmin.seed() : 0 });       // oyun SMP'ye girerken seed'i sorar
     if (url.startsWith("/admin/")) {
       if (!adminOk(body.key)) {            // sadece YANLIS anahtar denemeleri sayilir (10 dk'da 20)
         if (limited(ip)) return send({ status: 429, error: "Cok fazla deneme, biraz bekle" });
@@ -1507,7 +1569,7 @@ async function handleHttp(req, res) {
       if (url === "/admin/export") { await adminExport(body, res); return true; }
       const AH = { "/admin/give": adminGive, "/admin/give_all": adminGiveAll, "/admin/op": adminOp, "/admin/balance": adminBalance, "/admin/players": adminPlayers, "/admin/player": adminPlayer,
         "/admin/update": adminUpdateHandler, "/admin/punish": adminPunish, "/admin/setpass": adminSetPass, "/admin/delete": adminDelete, "/admin/import": adminImport, "/admin/backup_now": adminBackupNow,
-        "/admin/say": adminSayHandler, "/admin/prices": adminPrices, "/admin/prices_set": adminPricesSet, "/admin/prices_reset": adminPricesReset, "/admin/status": adminStatus, "/admin/resources": adminResources, "/admin/appupdate": adminAppUpdate, "/admin/appupdate_set": adminAppUpdateSet };
+        "/admin/say": adminSayHandler, "/admin/prices": adminPrices, "/admin/prices_set": adminPricesSet, "/admin/prices_reset": adminPricesReset, "/admin/status": adminStatus, "/admin/resources": adminResources, "/admin/appupdate": adminAppUpdate, "/admin/appupdate_set": adminAppUpdateSet, "/admin/smp": adminSmp };
       return send(await AH[url](body));
     }
     await logout(body.token);
@@ -1518,4 +1580,4 @@ async function handleHttp(req, res) {
   }
 }
 
-module.exports = { kufurStrike, setResourceExtra, meta: metaApi, backupDay, discordFile, setExtraExport, setExtraImport, setAdminSay, setStatusProvider, setUserPurge, setIslandHooks, handleHttp, verify, verifyUser, lookupName, setRankListener, setMuteListener, setBanListener, RANKS };
+module.exports = { setSmpAdmin, kufurStrike, setResourceExtra, meta: metaApi, backupDay, discordFile, setExtraExport, setExtraImport, setAdminSay, setStatusProvider, setUserPurge, setIslandHooks, handleHttp, verify, verifyUser, lookupName, setRankListener, setMuteListener, setBanListener, RANKS };

@@ -83,6 +83,40 @@ async function setupTables() {
   await pool.query("CREATE TABLE IF NOT EXISTS smp_regions (key TEXT PRIMARY KEY, data BYTEA NOT NULL, saved BIGINT NOT NULL DEFAULT 0)");
   await pool.query("CREATE TABLE IF NOT EXISTS smp_players (name TEXT PRIMARY KEY, data TEXT NOT NULL, saved BIGINT NOT NULL DEFAULT 0)");
   await pool.query("CREATE TABLE IF NOT EXISTS smp_backups (id TEXT PRIMARY KEY, created BIGINT NOT NULL, blocks INT NOT NULL DEFAULT 0, data BYTEA NOT NULL)");
+  await pool.query("CREATE TABLE IF NOT EXISTS smp_meta (key TEXT PRIMARY KEY, val TEXT NOT NULL)");
+}
+
+// ---------------------------------------------------------------- SMP SEED (admin sitesinden degistirilir)
+// Arazi istemcide seed'den uretilir; seed sunucuda saklanir, oyun SMP'ye girerken /smp_info ile sorar (script/lobby.gd SMP_SEED = yedek).
+const DEFAULT_SEED = 358147;
+const SEED_MAX = 2000000000;
+const cfgFile = path.join(dir, "smp_config.json");
+let seedVal = DEFAULT_SEED;
+const goodSeed = (n) => Number.isInteger(n) && n >= 1 && n <= SEED_MAX;
+async function loadSeed() {
+  try {
+    let v = null;
+    if (pool) {
+      const r = await pool.query("SELECT val FROM smp_meta WHERE key='seed'");
+      if (r.rows[0]) v = Number(r.rows[0].val);
+    } else {
+      try { v = Number(JSON.parse(await fsp.readFile(cfgFile, "utf8")).seed); } catch (e) { if (e.code !== "ENOENT") throw e; }
+    }
+    if (goodSeed(v)) seedVal = v;
+  } catch (e) { console.error("SMP seed okunamadi (varsayilan kullanilir):", e.message); }
+}
+const getSeed = () => seedVal;
+async function setSeed(n) {
+  n = Number(n);
+  if (!goodSeed(n)) throw new Error("seed 1 ile " + SEED_MAX + " arasi tam sayi olmali");
+  if (pool) await pool.query("INSERT INTO smp_meta (key, val) VALUES ('seed',$1) ON CONFLICT (key) DO UPDATE SET val=$1", [String(n)]);
+  else {
+    await fsp.mkdir(dir, { recursive: true });
+    await fsp.writeFile(cfgFile + ".tmp", JSON.stringify({ seed: n }));
+    await fsp.rename(cfgFile + ".tmp", cfgFile);
+  }
+  seedVal = n;
+  return n;
 }
 
 // ---------------------------------------------------------------- bellek ici dunya
@@ -206,6 +240,7 @@ async function initLoad() {
   state = "loading";
   try {
     if (pool) await setupTables();
+    await loadSeed();
     await loadAll();
     state = "ok";
     for (const p of pending) put(p[0], p[1], p[2], p[3]);
@@ -477,11 +512,14 @@ async function getPlayer(name) {
 }
 
 // Temizleyip eski kayitla birlestirir; yeni sunucu zamanini (t) doner. null = gecersiz / cok buyuk.
+let playerEpoch = 0;                       // admin sifirlamasi sirasinda gelen eski oyuncu kayitlari yazilmaz
 async function setPlayer(name, d) {
   if (state !== "ok") return null;
   const clean = cleanPlayerData(d);
   if (!clean) return null;
+  const ep = playerEpoch;
   const old = await getPlayer(name);
+  if (ep !== playerEpoch) return null;
   const merged = Object.assign({}, old ? old.d : {}, clean);
   const t = Date.now();
   const text = JSON.stringify({ t, d: merged });
@@ -498,15 +536,82 @@ async function setPlayer(name, d) {
   return t;
 }
 
+// ---------------------------------------------------------------- ADMIN: sifirlama
+// Haritayi (oyuncularin degistirdigi tum bloklari) siler. Once yedek alinir; yedek alinamazsa HICBIR SEY silinmez.
+// Sandik / ocak / oyuncu verisi server.js'den ayrica temizlenir.
+async function resetMap() {
+  await firstLoad;
+  if (state !== "ok") throw new Error("SMP hazir degil (" + state + ")");
+  await flush();
+  const had = total;
+  const bk = await backup("before-reset");
+  if (had > 0 && !bk) throw new Error("yedek alinamadi, harita silinmedi");
+  if (retryTimer) clearTimeout(retryTimer);
+  const rc = regions.size;
+  regions.clear(); total = 0; dirty.clear(); pending = []; droppedTotal = 0;
+  if (pool) {
+    await pool.query("DELETE FROM smp_regions");
+    await pool.query("DELETE FROM smp_world WHERE key='blocks'").catch(() => {});      // eski v1 kayit geri yuklenmesin
+  } else {
+    for (const n of await fsp.readdir(regionDir).catch(() => [])) if (/^r\./.test(n)) await fsp.unlink(path.join(regionDir, n));
+    await fsp.rename(legacyFile, legacyFile + ".eski_" + stamp()).catch(() => {});     // eski v1 dosya geri yuklenmesin
+  }
+  changedSinceBackup = false;
+  console.log("SMP: harita sifirlandi (" + had + " blok / " + rc + " bolge silindi, yedek: " + (bk ? bk.id : "yok") + ")");
+  return { blocks: had, regions: rc, backup: bk ? bk.id : null };
+}
+
+// Oyuncu kayitlarini sifirlar: o.inv = envanter + zirh bosalir, o.pos = home / homes / son konum silinir. only = tek oyuncu (kucuk harf) ya da null = herkes.
+// Doner: degisen kayit sayisi. Yeni "saved" zamani istemcide yerel dosyanin yerini aldirir (istemci sunucudaki daha yeni kaydi benimser).
+const EMPTY_SLOTS = 72, EMPTY_EQUIP = 10;       // hud.gd: 36 slot x (id, adet), 5 zirh / sol el x (id, adet)
+function resetOne(d, o) {
+  const out = Object.assign({}, d);
+  if (o.inv) out.inv = { slots: new Array(EMPTY_SLOTS).fill(0), equip: new Array(EMPTY_EQUIP).fill(0) };
+  if (o.pos) { delete out.home; delete out.homes; delete out.last; }
+  if (!out.inv && !out.home && !out.homes && !out.last) out.rst = Date.now();     // bos kayit istemcide yok sayilir: isaretle
+  return out;
+}
+async function resetPlayers(o, only) {
+  await firstLoad;
+  if (state !== "ok") throw new Error("SMP hazir degil (" + state + ")");
+  playerEpoch++;
+  const t = Date.now();
+  let n = 0;
+  try {
+    if (pool) {
+      const r = only ? await pool.query("SELECT name, data FROM smp_players WHERE name=$1", [only]) : await pool.query("SELECT name, data FROM smp_players");
+      for (const row of r.rows) {
+        let d; try { d = JSON.parse(row.data); } catch (e) { d = {}; }
+        await pool.query("UPDATE smp_players SET data=$2, saved=$3 WHERE name=$1", [row.name, JSON.stringify(resetOne(d, o)), t]);
+        n++;
+      }
+    } else {
+      const pdir = path.join(dir, "smp_players");
+      const files = only ? [playerFile(only)] : (await fsp.readdir(pdir).catch(() => [])).filter((f) => f.endsWith(".json")).map((f) => path.join(pdir, f));
+      for (const f of files) {
+        let cur = null;
+        try { cur = JSON.parse(await fsp.readFile(f, "utf8")); } catch (e) { continue; }
+        const d = cur && typeof cur.d === "object" && cur.d ? cur.d : {};
+        await fsp.writeFile(f + ".tmp", JSON.stringify({ t, d: resetOne(d, o) }));
+        try { await fsp.copyFile(f, f + ".bak"); } catch (e) { if (e.code !== "ENOENT") throw e; }
+        await fsp.rename(f + ".tmp", f);
+        n++;
+      }
+    }
+  } finally { playerEpoch++; }
+  console.log("SMP: oyuncu kaydi sifirlandi (" + (only || "herkes") + ", " + n + " kayit, envanter=" + !!o.inv + ", konum=" + !!o.pos + ")");
+  return n;
+}
+
 async function flush() { while (saving) await new Promise((r) => setTimeout(r, 50)); await save(); }
 const count = () => total;
 const status = () => state;
 const whenReady = () => firstLoad;
-const stats = () => ({ state, blocks: total, regions: regions.size, dirty: dirty.size, pending: pending.length, lastBackupAt });
+const stats = () => ({ seed: seedVal, state, blocks: total, regions: regions.size, dirty: dirty.size, pending: pending.length, lastBackupAt });
 
 initLoad();
 
-module.exports = { getBlock, setBlock, sendAll, sendRegions, getPlayer, setPlayer, flush, count, status, whenReady, stats, backup, listBackups, restoreBackup };
+module.exports = { getSeed, setSeed, resetMap, resetPlayers, getBlock, setBlock, sendAll, sendRegions, getPlayer, setPlayer, flush, count, status, whenReady, stats, backup, listBackups, restoreBackup };
 
 // ---------------------------------------------------------------- komut satiri
 if (require.main === module) {

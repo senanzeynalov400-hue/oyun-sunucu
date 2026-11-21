@@ -88,4 +88,23 @@ function unlock(k, ws) { const l = locks.get(k); if (l && l.ws === ws) locks.del
 function unlockAll(ws) { for (const [k, l] of locks) if (l.ws === ws) locks.delete(k); }
 async function flush() { await loaded; for (const k of map.keys()) dirty.add(k); await save(); }
 
-module.exports = { SLOTS, keyOf, get, set, tryLock, unlock, unlockAll, lockHeldByOther, flush, loaded };
+// ADMIN > SMP > Envanteri 0'la (depo de secilirse): name = tek oyuncu (kucuk harf), bos = herkesin deposu
+async function clearAll(name) {
+  await loaded;
+  const k = name ? keyOf(name) : null;
+  let n = 0;
+  if (k) {
+    if (map.delete(k)) n = 1;
+    dirty.add(k);
+    if (pool) await pool.query("DELETE FROM smp_depo WHERE key=$1", [k]).catch((e) => console.error("smp_depo silinemedi", e.message));
+  } else {
+    const keys = [...map.keys()];
+    n = keys.length;
+    map.clear();
+    for (const x of keys) dirty.add(x);
+    if (pool) await pool.query("DELETE FROM smp_depo").catch((e) => console.error("smp_depo silinemedi", e.message));
+  }
+  return n;
+}
+
+module.exports = { clearAll, SLOTS, keyOf, get, set, tryLock, unlock, unlockAll, lockHeldByOther, flush, loaded };

@@ -73,4 +73,7 @@ function set(x, y, z, d) {
 }
 function remove(x, y, z) { if (map.delete(key(x, y, z))) dirty = true; }
 async function flush() { await loaded; dirty = true; await save(); }
-module.exports = { FURNACE_ID, get, set, remove, flush, loaded };
+// ADMIN > SMP > Haritayi 0'la: tum ocak kayitlari silinir
+function clearAll() { const n = map.size; map.clear(); dirty = true; return n; }
+const size = () => map.size;
+module.exports = { clearAll, size, FURNACE_ID, get, set, remove, flush, loaded };

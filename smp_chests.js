@@ -89,4 +89,7 @@ function tryLock(x, y, z, ws) {
 function unlock(x, y, z, ws) { const l = locks.get(key(x, y, z)); if (l && l.ws === ws) locks.delete(key(x, y, z)); }
 function unlockAll(ws) { for (const [k, l] of locks) if (l.ws === ws) locks.delete(k); }
 async function flush() { await loaded; dirty = true; await save(); }
-module.exports = { CHEST_ID, get, set, remove, flush, loaded, okPos, lockHeldByOther, tryLock, unlock, unlockAll };
+// ADMIN > SMP > Haritayi 0'la: tum sandik kayitlari silinir
+function clearAll() { const n = map.size; map.clear(); locks.clear(); dirty = true; return n; }
+const size = () => map.size;
+module.exports = { clearAll, size, CHEST_ID, get, set, remove, flush, loaded, okPos, lockHeldByOther, tryLock, unlock, unlockAll };

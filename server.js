@@ -154,6 +154,67 @@ AUTH.setAdminSay(({ name, text, tag, target, to }) => {
 AUTH.setResourceExtra(async () => ({ islands: await ISLANDS.stats(), ws: clients.size, rooms: rooms.size }));     // v207: admin > Sunucu kaynaklari
 AUTH.setStatusProvider(() => ({ online: clients.size, players: [...clients.values()].filter((c) => c.crtt !== undefined || c.rtt !== undefined).map((c) => ({ name: c.name, ms: c.crtt !== undefined ? c.crtt : c.rtt })) }));
 
+// ---- ADMIN > SMP (admin sitesi): seed degistir, harita 0'la, envanter 0'la
+// Odadaki (ya da sadece adi verilen) SMP oyunculara "smp_reset" yollar. inv = envanteri bosalt (oyun surer), world = Hub'a at (harita / seed degisti).
+function smpNotify(msg, only) {
+  const set = rooms.get("smp");
+  let n = 0;
+  if (!set) return 0;
+  for (const w of [...set]) {
+    const c = clients.get(w);
+    if (only && String((c && c.name) || "").toLowerCase() !== only) continue;
+    send(w, msg);
+    n++;
+  }
+  return n;
+}
+async function smpKickAll(text) {
+  const set = rooms.get("smp");
+  const list = set ? [...set] : [];
+  for (const w of list) send(w, { type: "smp_reset", world: true, inv: false, text });
+  await new Promise((r) => setTimeout(r, 400));
+  for (const w of list) leaveRoom(w);           // artik blok / kayit paketleri kabul edilmez
+  await new Promise((r) => setTimeout(r, 1500));
+  return list.length;
+}
+async function smpWipeAll(why) {
+  const kicked = await smpKickAll(why);
+  const m = await SMP.resetMap();
+  const chests = SMPC.clearAll(), furnaces = SMPF.clearAll();
+  const players = await SMP.resetPlayers({ pos: true }, null);
+  await SMPC.flush(); await SMPF.flush();
+  return { kicked, blocks: m.blocks, regions: m.regions, backup: m.backup, chests, furnaces, players };
+}
+AUTH.setSmpAdmin({
+  seed: () => SMP.getSeed(),
+  async info() {
+    await SMP.whenReady();
+    return { ...SMP.stats(), online: (rooms.get("smp") || new Set()).size, chests: SMPC.size(), furnaces: SMPF.size() };
+  },
+  async inv(name, depo) {
+    await SMP.whenReady();
+    const only = name || null;
+    const players = await SMP.resetPlayers({ inv: true }, only);
+    const depoN = depo ? await SMPD.clearAll(only) : 0;
+    const notified = smpNotify({ type: "smp_reset", inv: true, world: false, text: "Envanterin yöneticiler tarafından sıfırlandı." }, only);
+    return { players, depo: depoN, notified };
+  },
+  async seedSet(n, wipe) {
+    await SMP.whenReady();
+    const old = SMP.getSeed();
+    await SMP.setSeed(n);
+    const why = "SMP haritası değişti (yeni seed). Hub'a dönüyorsun, tekrar girebilirsin.";
+    if (wipe) return { old, seed: n, ...(await smpWipeAll(why)) };
+    const kicked = await smpKickAll(why);
+    const players = await SMP.resetPlayers({ pos: true }, null);
+    return { old, seed: n, kicked, players };
+  },
+  async mapReset() {
+    await SMP.whenReady();
+    return await smpWipeAll("SMP haritası sıfırlandı. Hub'a dönüyorsun, tekrar girebilirsin.");
+  },
+});
+
 function send(ws, obj) {
   if (ws.readyState === 1) ws.send(JSON.stringify(obj));
 }
@@ -381,6 +442,10 @@ wss.on("connection", (ws) => {
         dequeue(ws);
         await SMP.whenReady();
         if (SMP.status() !== "ok") { send(ws, { type: "error", message: "SMP yukleniyor, biraz sonra tekrar dene" }); break; }
+        if (Number(msg.seed) > 0 && Number(msg.seed) !== SMP.getSeed()) {      // istemci eski seed ile uretiyor: dunyayi bozmasin, Hub'a gonder
+          send(ws, { type: "smp_reset", world: true, inv: false, text: "SMP haritası değişti (yeni seed). Hub'a dönüp tekrar gir." });
+          break;
+        }
         const sm = rooms.get("smp");
         if (sm && sm.size >= SMP_MAX && !sm.has(ws)) {
           send(ws, { type: "error", message: "SMP dolu" });
